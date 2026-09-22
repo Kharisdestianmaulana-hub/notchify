@@ -1,0 +1,79 @@
+Command line invocation:
+    /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild build -project Notchify.xcodeproj -scheme Notchify -configuration Debug -derivedDataPath /Users/riray/Documents/Notchify/DerivedData SYMROOT=/Users/riray/Documents/Notchify/build CODE_SIGN_IDENTITY= CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO
+
+User defaults from command line:
+    IDEDerivedDataPathOverride = /Users/riray/Documents/Notchify/DerivedData
+    IDEPackageSupportUseBuiltinSCM = YES
+
+Build settings from command line:
+    CODE_SIGN_IDENTITY = 
+    CODE_SIGNING_ALLOWED = NO
+    CODE_SIGNING_REQUIRED = NO
+    SYMROOT = /Users/riray/Documents/Notchify/build
+
+--- xcodebuild: WARNING: Using the first of multiple matching destinations:
+{ platform:macOS, arch:x86_64, id:3103BC78-250D-5DA3-862B-DB2F9B706EB6 }
+{ platform:macOS, name:Any Mac }
+Prepare packages
+
+note: Using codesigning identity override: 
+Computing target dependency graph and provisioning inputs
+
+Create build description
+Build description signature: 1d4717d197a8ac2d59b42de2cf66eeea
+Build description path: /Users/riray/Documents/Notchify/DerivedData/Build/Intermediates.noindex/XCBuildData/1d4717d197a8ac2d59b42de2cf66eeea-desc.xcbuild
+
+note: Building targets in dependency order
+SwiftDriver Notchify normal x86_64 com.apple.xcode.tools.swift.compiler (in target 'Notchify' from project 'Notchify')
+    cd /Users/riray/Documents/Notchify
+    builtin-SwiftDriver -- /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc -module-name Notchify -Onone -enforce-exclusivity\=checked @/Users/riray/Documents/Notchify/DerivedData/Build/Intermediates.noindex/Notchify.build/Debug/Notchify.build/Objects-normal/x86_64/Notchify.SwiftFileList -DDEBUG -sdk /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX13.0.sdk -target x86_64-apple-macos12.0 -enable-bare-slash-regex -g -module-cache-path /Users/riray/Documents/Notchify/DerivedData/ModuleCache.noindex -Xfrontend -serialize-debugging-options -enable-testing -index-store-path /Users/riray/Documents/Notchify/DerivedData/Index.noindex/DataStore -swift-version 5 -I /Users/riray/Documents/Notchify/build/Debug -F /Users/riray/Documents/Notchify/build/Debug -emit-localized-strings -emit-localized-strings-path /Users/riray/Documents/Notchify/DerivedData/Build/Intermediates.noindex/Notchify.build/Debug/Notchify.build/Objects-normal/x86_64 -c -j4 -enable-batch-mode -incremental -output-file-map /Users/riray/Documents/Notchify/DerivedData/Build/Intermediates.noindex/Notchify.build/Debug/Notchify.build/Objects-normal/x86_64/Notchify-OutputFileMap.json -use-frontend-parseable-output -save-temps -no-color-diagnostics -serialize-diagnostics -emit-dependencies -emit-module -emit-module-path /Users/riray/Documents/Notchify/DerivedData/Build/Intermediates.noindex/Notchify.build/Debug/Notchify.build/Objects-normal/x86_64/Notchify.swiftmodule -Xcc -I/Users/riray/Documents/Notchify/DerivedData/Build/Intermediates.noindex/Notchify.build/Debug/Notchify.build/swift-overrides.hmap -Xcc -iquote -Xcc /Users/riray/Documents/Notchify/DerivedData/Build/Intermediates.noindex/Notchify.build/Debug/Notchify.build/Notchify-generated-files.hmap -Xcc -I/Users/riray/Documents/Notchify/DerivedData/Build/Intermediates.noindex/Notchify.build/Debug/Notchify.build/Notchify-own-target-headers.hmap -Xcc -I/Users/riray/Documents/Notchify/DerivedData/Build/Intermediates.noindex/Notchify.build/Debug/Notchify.build/Notchify-all-target-headers.hmap -Xcc -iquote -Xcc /Users/riray/Documents/Notchify/DerivedData/Build/Intermediates.noindex/Notchify.build/Debug/Notchify.build/Notchify-project-headers.hmap -Xcc -I/Users/riray/Documents/Notchify/build/Debug/include -Xcc -I/Users/riray/Documents/Notchify/DerivedData/Build/Intermediates.noindex/Notchify.build/Debug/Notchify.build/DerivedSources-normal/x86_64 -Xcc -I/Users/riray/Documents/Notchify/DerivedData/Build/Intermediates.noindex/Notchify.build/Debug/Notchify.build/DerivedSources/x86_64 -Xcc -I/Users/riray/Documents/Notchify/DerivedData/Build/Intermediates.noindex/Notchify.build/Debug/Notchify.build/DerivedSources -Xcc -DDEBUG\=1 -emit-objc-header -emit-objc-header-path /Users/riray/Documents/Notchify/DerivedData/Build/Intermediates.noindex/Notchify.build/Debug/Notchify.build/Objects-normal/x86_64/Notchify-Swift.h -working-directory /Users/riray/Documents/Notchify -experimental-emit-module-separately
+
+SwiftCompile normal x86_64 Compiling\ ContentView.swift /Users/riray/Documents/Notchify/Notchify/ContentView.swift (in target 'Notchify' from project 'Notchify')
+    cd /Users/riray/Documents/Notchify
+    builtin-swiftTaskExecution -- /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swift-frontend -frontend -c -primary-file /Users/riray/Documents/Notchify/Notchify/ContentView.swift /Users/riray/Documents/Notchify/Notchify/NotchifyApp.swift -emit-dependencies-path /Users/riray/Documents/Notchify/DerivedData/Build/Intermediates.noindex/Notchify.build/Debug/Notchify.build/Objects-normal/x86_64/ContentView.d -emit-reference-dependencies-path /Users/riray/Documents/Notchify/DerivedData/Build/Intermediates.noindex/Notchify.build/Debug/Notchify.build/Objects-normal/x86_64/ContentView.swiftdeps -serialize-diagnostics-path /Users/riray/Documents/Notchify/DerivedData/Build/Intermediates.noindex/Notchify.build/Debug/Notchify.build/Objects-normal/x86_64/ContentView.dia -emit-localized-strings -emit-localized-strings-path /Users/riray/Documents/Notchify/DerivedData/Build/Intermediates.noindex/Notchify.build/Debug/Notchify.build/Objects-normal/x86_64 -target x86_64-apple-macos12.0 -enable-objc-interop -stack-check -sdk /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX13.0.sdk -I /Users/riray/Documents/Notchify/build/Debug -F /Users/riray/Documents/Notchify/build/Debug -no-color-diagnostics -enable-testing -g -module-cache-path /Users/riray/Documents/Notchify/DerivedData/ModuleCache.noindex -swift-version 5 -enforce-exclusivity\=checked -Onone -D DEBUG -serialize-debugging-options -enable-bare-slash-regex -empty-abi-descriptor -Xcc -working-directory -Xcc /Users/riray/Documents/Notchify -resource-dir /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift -enable-anonymous-context-mangled-names -Xcc -I/Users/riray/Documents/Notchify/DerivedData/Build/Intermediates.noindex/Notchify.build/Debug/Notchify.build/swift-overrides.hmap -Xcc -iquote -Xcc /Users/riray/Documents/Notchify/DerivedData/Build/Intermediates.noindex/Notchify.build/Debug/Notchify.build/Notchify-generated-files.hmap -Xcc -I/Users/riray/Documents/Notchify/DerivedData/Build/Intermediates.noindex/Notchify.build/Debug/Notchify.build/Notchify-own-target-headers.hmap -Xcc -I/Users/riray/Documents/Notchify/DerivedData/Build/Intermediates.noindex/Notchify.build/Debug/Notchify.build/Notchify-all-target-headers.hmap -Xcc -iquote -Xcc /Users/riray/Documents/Notchify/DerivedData/Build/Intermediates.noindex/Notchify.build/Debug/Notchify.build/Notchify-project-headers.hmap -Xcc -I/Users/riray/Documents/Notchify/build/Debug/include -Xcc -I/Users/riray/Documents/Notchify/DerivedData/Build/Intermediates.noindex/Notchify.build/Debug/Notchify.build/DerivedSources-normal/x86_64 -Xcc -I/Users/riray/Documents/Notchify/DerivedData/Build/Intermediates.noindex/Notchify.build/Debug/Notchify.build/DerivedSources/x86_64 -Xcc -I/Users/riray/Documents/Notchify/DerivedData/Build/Intermediates.noindex/Notchify.build/Debug/Notchify.build/DerivedSources -Xcc -DDEBUG\=1 -module-name Notchify -frontend-parseable-output -disable-clang-spi -target-sdk-version 13.0 -o /Users/riray/Documents/Notchify/DerivedData/Build/Intermediates.noindex/Notchify.build/Debug/Notchify.build/Objects-normal/x86_64/ContentView.o -index-unit-output-path /Notchify.build/Debug/Notchify.build/Objects-normal/x86_64/ContentView.o -index-store-path /Users/riray/Documents/Notchify/DerivedData/Index.noindex/DataStore -index-system-modules
+
+CompileSwift normal x86_64 /Users/riray/Documents/Notchify/Notchify/ContentView.swift (in target 'Notchify' from project 'Notchify')
+    cd /Users/riray/Documents/Notchify
+    /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swift-frontend -c -primary-file /Users/riray/Documents/Notchify/Notchify/ContentView.swift /Users/riray/Documents/Notchify/Notchify/NotchifyApp.swift -emit-dependencies-path /Users/riray/Documents/Notchify/DerivedData/Build/Intermediates.noindex/Notchify.build/Debug/Notchify.build/Objects-normal/x86_64/ContentView.d -emit-reference-dependencies-path /Users/riray/Documents/Notchify/DerivedData/Build/Intermediates.noindex/Notchify.build/Debug/Notchify.build/Objects-normal/x86_64/ContentView.swiftdeps -serialize-diagnostics-path /Users/riray/Documents/Notchify/DerivedData/Build/Intermediates.noindex/Notchify.build/Debug/Notchify.build/Objects-normal/x86_64/ContentView.dia -emit-localized-strings -emit-localized-strings-path /Users/riray/Documents/Notchify/DerivedData/Build/Intermediates.noindex/Notchify.build/Debug/Notchify.build/Objects-normal/x86_64 -target x86_64-apple-macos12.0 -enable-objc-interop -stack-check -sdk /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX13.0.sdk -I /Users/riray/Documents/Notchify/build/Debug -F /Users/riray/Documents/Notchify/build/Debug -no-color-diagnostics -enable-testing -g -module-cache-path /Users/riray/Documents/Notchify/DerivedData/ModuleCache.noindex -swift-version 5 -enforce-exclusivity\=checked -Onone -D DEBUG -serialize-debugging-options -enable-bare-slash-regex -empty-abi-descriptor -Xcc -working-directory -Xcc /Users/riray/Documents/Notchify -resource-dir /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift -enable-anonymous-context-mangled-names -Xcc -I/Users/riray/Documents/Notchify/DerivedData/Build/Intermediates.noindex/Notchify.build/Debug/Notchify.build/swift-overrides.hmap -Xcc -iquote -Xcc /Users/riray/Documents/Notchify/DerivedData/Build/Intermediates.noindex/Notchify.build/Debug/Notchify.build/Notchify-generated-files.hmap -Xcc -I/Users/riray/Documents/Notchify/DerivedData/Build/Intermediates.noindex/Notchify.build/Debug/Notchify.build/Notchify-own-target-headers.hmap -Xcc -I/Users/riray/Documents/Notchify/DerivedData/Build/Intermediates.noindex/Notchify.build/Debug/Notchify.build/Notchify-all-target-headers.hmap -Xcc -iquote -Xcc /Users/riray/Documents/Notchify/DerivedData/Build/Intermediates.noindex/Notchify.build/Debug/Notchify.build/Notchify-project-headers.hmap -Xcc -I/Users/riray/Documents/Notchify/build/Debug/include -Xcc -I/Users/riray/Documents/Notchify/DerivedData/Build/Intermediates.noindex/Notchify.build/Debug/Notchify.build/DerivedSources-normal/x86_64 -Xcc -I/Users/riray/Documents/Notchify/DerivedData/Build/Intermediates.noindex/Notchify.build/Debug/Notchify.build/DerivedSources/x86_64 -Xcc -I/Users/riray/Documents/Notchify/DerivedData/Build/Intermediates.noindex/Notchify.build/Debug/Notchify.build/DerivedSources -Xcc -DDEBUG\=1 -module-name Notchify -frontend-parseable-output -disable-clang-spi -target-sdk-version 13.0 -o /Users/riray/Documents/Notchify/DerivedData/Build/Intermediates.noindex/Notchify.build/Debug/Notchify.build/Objects-normal/x86_64/ContentView.o -index-unit-output-path /Notchify.build/Debug/Notchify.build/Objects-normal/x86_64/ContentView.o -index-store-path /Users/riray/Documents/Notchify/DerivedData/Index.noindex/DataStore -index-system-modules
+/Users/riray/Documents/Notchify/Notchify/ContentView.swift:1519:42: error: type 'NotchTab' has no member 'calculator'
+            if viewModel.selectedTab == .calculator { return 230 }
+                                        ~^~~~~~~~~~
+/Users/riray/Documents/Notchify/Notchify/ContentView.swift:1552:21: error: closure containing control flow statement cannot be used with result builder 'AccessibilityRotorContentBuilder'
+                    if viewModel.isExpanded {
+                    ^
+SwiftUI.AccessibilityRotorContentBuilder:2:30: note: struct 'AccessibilityRotorContentBuilder' declared here
+@resultBuilder public struct AccessibilityRotorContentBuilder {
+                             ^
+/Users/riray/Documents/Notchify/Notchify/ContentView.swift:1551:23: error: missing argument for parameter #1 in call
+                Group {
+                      ^
+                      <#_#>
+SwiftUI.AccessibilityRotorContentBuilder:3:24: note: 'buildBlock' declared here
+    public static func buildBlock<Content>(_ content: Content) -> some AccessibilityRotorContent where Content : AccessibilityRotorContent
+                       ^
+/Users/riray/Documents/Notchify/Notchify/ContentView.swift:1551:17: error: referencing instance method 'animation(_:value:)' on 'Group' requires that 'some AccessibilityRotorContent' conform to 'View'
+                Group {
+                ^
+SwiftUI.Group:2:11: note: requirement from conditional conformance of 'Group<some AccessibilityRotorContent>' to 'View'
+extension Group : View where Content : View {
+          ^
+/Users/riray/Documents/Notchify/Notchify/ContentView.swift:2467:23: error: value of type 'EKEventStore' has no member 'requestFullAccessToEvents'
+                store.requestFullAccessToEvents { granted, _ in
+                ~~~~~ ^~~~~~~~~~~~~~~~~~~~~~~~~
+/Users/riray/Documents/Notchify/Notchify/ContentView.swift:2647:20: error: type '()' cannot conform to 'View'
+            } else {
+                   ^
+/Users/riray/Documents/Notchify/Notchify/ContentView.swift:2647:20: note: only concrete types such as structs, enums and classes can conform to protocols
+            } else {
+                   ^
+/Users/riray/Documents/Notchify/Notchify/ContentView.swift:2647:20: note: required by static method 'buildBlock' where 'C0' = '()'
+            } else {
+                   ^
+
+** BUILD FAILED **
+
+
+The following build commands failed:
+	CompileSwift normal x86_64 /Users/riray/Documents/Notchify/Notchify/ContentView.swift (in target 'Notchify' from project 'Notchify')
+	SwiftCompile normal x86_64 Compiling\ ContentView.swift /Users/riray/Documents/Notchify/Notchify/ContentView.swift (in target 'Notchify' from project 'Notchify')
+(2 failures)
