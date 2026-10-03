@@ -1590,8 +1590,19 @@ struct ContentView: View {
     var body: some View {
         VStack(spacing: 0) {
             ZStack(alignment: .top) {
-                // The Main Notch
-                ZStack(alignment: .top) {
+                // The Main Notch Assembly
+                HStack(alignment: .top, spacing: 10) {
+                    if PrivacyMonitor.shared.isCameraActive || PrivacyMonitor.shared.isMicActive {
+                        PrivacyIndicatorView()
+                            .transition(.asymmetric(
+                                insertion: .move(edge: .trailing).combined(with: .scale).combined(with: .opacity),
+                                removal: .move(edge: .trailing).combined(with: .scale).combined(with: .opacity)
+                            ))
+                            .animation(.interactiveSpring(response: 0.5, dampingFraction: 0.6), value: PrivacyMonitor.shared.isCameraActive)
+                            .animation(.interactiveSpring(response: 0.5, dampingFraction: 0.6), value: PrivacyMonitor.shared.isMicActive)
+                    }
+                    
+                    ZStack(alignment: .top) {
                     NotchShape(cornerRadius: viewModel.isExpanded ? 22 : (isBlossoming ? 18 : 12), flareRadius: 16)
                         .fill(Color.black)
                         .overlay(
@@ -1811,6 +1822,7 @@ struct ContentView: View {
                         viewModel.isExpanded = false
                     }
                 }
+            }
             } // End of inner ZStack
             
             // Detached Pomodoro Timer Island
@@ -3106,5 +3118,178 @@ struct LanguageManager {
             return translationsToId[key] ?? key
         }
         return key
+    }
+}
+struct PrivacyIndicatorView: View {
+    @ObservedObject var privacy = PrivacyMonitor.shared
+    @State private var isBlinking = false
+    
+    var body: some View {
+        ZStack {
+            // Background Island
+            Capsule()
+                .fill(Color.black)
+                .frame(width: 32, height: 32)
+                .overlay(
+                    Capsule()
+                        .stroke(Color.white.opacity(0.08), lineWidth: 0.5)
+                )
+            
+            // Dot
+            Circle()
+                .fill(privacy.isCameraActive ? Color.green : Color.orange)
+                .frame(width: 8, height: 8)
+                .opacity(isBlinking ? 0.3 : 1.0)
+                .animation(.easeInOut(duration: 1.0).repeatForever(), value: isBlinking)
+                .onAppear {
+                    isBlinking = true
+                }
+        }
+        .frame(height: 34, alignment: .top) // Align with compact height
+        .padding(.top, 0)
+    }
+}
+import SwiftUI
+import AppKit
+
+class NotchViewModel: ObservableObject {
+    @Published var isExpanded: Bool = false
+    @Published var clipboardItems: [String] = []
+    
+    // For media info (dummy data for now)
+    @Published var currentSong: String = "AirPods Pro"
+    @Published var currentArtist: String = "L 80%   R 78%   Case 100%"
+    
+    private var clipboardTimer: Timer?
+    private let pasteboard = NSPasteboard.general
+    private var lastChangeCount: Int = 0
+    
+    init() {
+        startClipboardPolling()
+    }
+    
+    func startClipboardPolling() {
+        lastChangeCount = pasteboard.changeCount
+        clipboardTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            self?.checkClipboard()
+        }
+    }
+    
+    private func checkClipboard() {
+        guard pasteboard.changeCount != lastChangeCount else { return }
+        lastChangeCount = pasteboard.changeCount
+        
+        if let string = pasteboard.string(forType: .string) {
+            DispatchQueue.main.async {
+                // Avoid duplicates at the top
+                if self.clipboardItems.first != string {
+                    self.clipboardItems.insert(string, at: 0)
+                    if self.clipboardItems.count > 3 {
+                        self.clipboardItems.removeLast()
+                    }
+                }
+            }
+        }
+    }
+}
+import Foundation
+import CoreMediaIO
+import CoreAudio
+import Combine
+
+import Foundation
+import CoreMediaIO
+import CoreAudio
+import Combine
+
+class PrivacyMonitor: ObservableObject {
+    @Published var isCameraActive: Bool = false
+    @Published var isMicActive: Bool = false
+    
+    static let shared = PrivacyMonitor()
+    private var timer: Timer?
+    
+    init() {
+        startMonitoring()
+    }
+    
+    func startMonitoring() {
+        timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            self?.checkStatus()
+        }
+        RunLoop.main.add(timer!, forMode: .common)
+    }
+    
+    func stopMonitoring() {
+        timer?.invalidate()
+        timer = nil
+    }
+    
+    private func checkStatus() {
+        let camStatus = checkCamera()
+        let micStatus = checkMic()
+        
+        DispatchQueue.main.async {
+            if self.isCameraActive != camStatus {
+                self.isCameraActive = camStatus
+            }
+            if self.isMicActive != micStatus {
+                self.isMicActive = micStatus
+            }
+        }
+    }
+    
+    private func checkCamera() -> Bool {
+        var opa = CMIOObjectPropertyAddress(
+            mSelector: CMIOObjectPropertySelector(kCMIOHardwarePropertyDevices),
+            mScope: CMIOObjectPropertyScope(kCMIOObjectPropertyScopeGlobal),
+            mElement: CMIOObjectPropertyElement(kCMIOObjectPropertyElementMain)
+        )
+        var dataSize: UInt32 = 0
+        var dataUsed: UInt32 = 0
+        guard CMIOObjectGetPropertyDataSize(CMIOObjectID(kCMIOObjectSystemObject), &opa, 0, nil, &dataSize) == 0 else { return false }
+        
+        let deviceCount = Int(dataSize) / MemoryLayout<CMIODeviceID>.size
+        var devices = [CMIODeviceID](repeating: 0, count: deviceCount)
+        guard CMIOObjectGetPropertyData(CMIOObjectID(kCMIOObjectSystemObject), &opa, 0, nil, dataSize, &dataUsed, &devices) == 0 else { return false }
+        
+        for device in devices {
+            var runningOpa = CMIOObjectPropertyAddress(
+                mSelector: CMIOObjectPropertySelector(kCMIODevicePropertyDeviceIsRunningSomewhere),
+                mScope: CMIOObjectPropertyScope(kCMIOObjectPropertyScopeWildcard),
+                mElement: CMIOObjectPropertyElement(kCMIOObjectPropertyElementWildcard)
+            )
+            var isRunning: UInt32 = 0
+            var size = UInt32(MemoryLayout<UInt32>.size)
+            if CMIOObjectGetPropertyData(device, &runningOpa, 0, nil, size, &dataUsed, &isRunning) == 0 {
+                if isRunning == 1 { return true }
+            }
+        }
+        return false
+    }
+    
+    private func checkMic() -> Bool {
+        var opa = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultInputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var deviceID = kAudioObjectUnknown
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &opa, 0, nil, &size, &deviceID) == 0 else { return false }
+        
+        if deviceID != kAudioObjectUnknown {
+            var runningOpa = AudioObjectPropertyAddress(
+                mSelector: kAudioDevicePropertyDeviceIsRunningSomewhere,
+                mScope: kAudioObjectPropertyScopeWildcard,
+                mElement: kAudioObjectPropertyElementWildcard
+            )
+            var isRunning: UInt32 = 0
+            var rSize = UInt32(MemoryLayout<UInt32>.size)
+            if AudioObjectGetPropertyData(deviceID, &runningOpa, 0, nil, &rSize, &isRunning) == 0 {
+                return isRunning != 0
+            }
+        }
+        return false
     }
 }
