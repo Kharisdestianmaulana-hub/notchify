@@ -32,7 +32,7 @@ struct SettingsView: View {
 }
 
 struct GeneralSettingsView: View {
-    @AppStorage("enableGlow") private var enableGlow = true
+    @AppStorage("enableGlow") private var enableGlow = false
     @AppStorage("expandTrigger") private var expandTrigger = "hover"
     @AppStorage("autoHideDelay") private var autoHideDelay = 0.5
     
@@ -87,7 +87,7 @@ struct GeneralSettingsView: View {
 }
 
 struct TabsSettingsView: View {
-    @AppStorage("tabOrderStr") private var tabOrderStr = "media,clipboard,dropzone,pomodoro,calculator,weather,system,agenda"
+    @AppStorage("tabOrderStr") private var tabOrderStr = "media,clipboard,dropzone,pomodoro,calculator,weather,system,agenda,mirror"
     @AppStorage("hiddenTabsStr") private var hiddenTabsStr = ""
     
     @State private var tabs: [NotchTab] = []
@@ -159,7 +159,8 @@ struct TabsSettingsView: View {
 }
 
 struct AppearanceSettingsView: View {
-    @AppStorage("enableGlow") private var enableGlow = true
+    @AppStorage("enableGlow") private var enableGlow = false
+    @AppStorage("enableLyrics") private var enableLyrics = false
     @AppStorage("notchOpacity") private var notchOpacity: Double = 1.0
     
     var body: some View {
@@ -167,6 +168,15 @@ struct AppearanceSettingsView: View {
             Section(header: Text("Efek Visual").font(.headline)) {
                 Toggle("Gunakan efek cahaya (Glow) di belakang Notch", isOn: $enableGlow)
                 Text("Mematikan fitur ini dapat menghemat penggunaan CPU/GPU pada Mac yang lebih tua.")
+                    .font(.caption)
+                    .foregroundColor(.gray)
+            }
+            
+            Divider().padding(.vertical, 8)
+            
+            Section(header: Text("Media & Lirik").font(.headline)) {
+                Toggle("Cari & tampilkan lirik musik", isOn: $enableLyrics)
+                Text("Ambil lirik tersinkronisasi online saat memutar musik.")
                     .font(.caption)
                     .foregroundColor(.gray)
             }

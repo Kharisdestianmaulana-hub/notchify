@@ -25,7 +25,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             // so we don't need to resize the window (which causes lag).
             // We just animate the SwiftUI view inside this large clear window.
             let panelWidth: CGFloat = 600
-            let panelHeight: CGFloat = 300 // Large enough for expanded state
+            let panelHeight: CGFloat = 380 // Large enough for expanded state
             
             let screenRect = screen.frame
             let x = (screenRect.width - panelWidth) / 2

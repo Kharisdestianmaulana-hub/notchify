@@ -1,5 +1,11 @@
 import SwiftUI
 import AppKit
+import AVFoundation
+import AudioToolbox
+import AVKit
+import CoreWLAN
+import Network
+import SystemConfiguration
 
 // MARK: - Models
 enum NotchTab: String, CaseIterable, Identifiable, Codable {
@@ -11,19 +17,43 @@ enum NotchTab: String, CaseIterable, Identifiable, Codable {
     case weather = "cloud.sun.fill"
     case system = "gauge"
     case agenda = "calendar"
+    case mirror = "camera.fill"
+    case notes = "note.text"
+    case network = "network"
     
     var id: String { self.rawValue }
     
     var displayName: String {
         switch self {
         case .media: return LanguageManager.tr("Media (Music)")
-        case .clipboard: return "Clipboard Manager"
-        case .dropzone: return "Dropzone"
-        case .pomodoro: return "Pomodoro Timer"
+        case .clipboard: return LanguageManager.tr("Clipboard Manager")
+        case .dropzone: return LanguageManager.tr("Dropzone")
+        case .pomodoro: return LanguageManager.tr("Pomodoro Timer")
         case .calculator: return LanguageManager.tr("Calculator")
         case .weather: return LanguageManager.tr("Weather")
         case .system: return LanguageManager.tr("System Monitor")
         case .agenda: return LanguageManager.tr("Agenda & Events")
+        case .mirror: return LanguageManager.tr("Mirror")
+        case .notes: return LanguageManager.tr("Scratchpad & Tasks")
+        case .network: return LanguageManager.tr("Network Radar")
+        }
+    }
+    
+    static func from(string: String) -> NotchTab? {
+        if let match = NotchTab(rawValue: string) { return match }
+        switch string.lowercased() {
+        case "media", "music": return .media
+        case "clipboard": return .clipboard
+        case "dropzone": return .dropzone
+        case "pomodoro", "timer": return .pomodoro
+        case "calculator": return .calculator
+        case "weather": return .weather
+        case "system": return .system
+        case "agenda": return .agenda
+        case "mirror", "camera": return .mirror
+        case "notes", "note", "todo", "tasks": return .notes
+        case "network", "wifi", "speed": return .network
+        default: return nil
         }
     }
 }
@@ -33,6 +63,7 @@ class NotchViewModel: ObservableObject {
     @Published var isExpanded: Bool = false
     @Published var isPinningExpansion: Bool = false
     @Published var clipboardItems: [String] = []
+    @Published var pinnedClipboardItems: [String] = []
     
     // Media States
     @Published var currentSong: String = "No Media Playing"
@@ -40,6 +71,16 @@ class NotchViewModel: ObservableObject {
     @Published var artwork: NSImage? = nil
     @Published var isPlaying: Bool = false
     @Published var showClock: Bool = true
+    @Published var playerBundleId: String? = nil
+    @Published var playerAppName: String = ""
+    
+    var playerAppIcon: NSImage? {
+        guard let bundleId = playerBundleId,
+              let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) else {
+            return nil
+        }
+        return NSWorkspace.shared.icon(forFile: url.path)
+    }
     
     @Published var duration: Double = 0.0
     var elapsed: Double = 0.0
@@ -50,6 +91,7 @@ class NotchViewModel: ObservableObject {
     
     // Pomodoro States
     @Published var isPomodoroActive: Bool = false
+    @Published var isPomodoroPaused: Bool = false
     @Published var pomodoroRemaining: TimeInterval = 0
     @Published var pomodoroTotal: TimeInterval = 0
     @Published var showTimesUp: Bool = false
@@ -59,6 +101,8 @@ class NotchViewModel: ObservableObject {
     @Published var calcInput: String = "0"
     @Published var calcPrevious: Double? = nil
     @Published var calcOperator: String? = nil
+    @Published var calcExpression: String = ""
+    @Published var calcIsNewInput: Bool = false
     
     // HUD States
     @Published var showVolumeHUD: Bool = false
@@ -72,6 +116,12 @@ class NotchViewModel: ObservableObject {
     @Published var clipboardMessage: String = ""
     @Published var clipboardIcon: String = ""
     @Published var clipboardIsCut: Bool = false
+    
+    // Battery HUD State
+    @Published var showBatteryHUD: Bool = false
+    @Published var batteryLevel: Int = 100
+    @Published var isBatteryCharging: Bool = false
+    @Published var isACConnected: Bool = true
     
     private var lastActionWasCut = false
     private var lastActionTime = Date()
@@ -117,6 +167,7 @@ class NotchViewModel: ObservableObject {
         pomodoroTotal = minutes * 60
         pomodoroRemaining = minutes * 60
         isPomodoroActive = true
+        isPomodoroPaused = false
         showTimesUp = false
         
         pomodoroTimer?.invalidate()
@@ -127,6 +178,7 @@ class NotchViewModel: ObservableObject {
             } else {
                 self.stopPomodoro()
                 self.showTimesUp = true
+                NSSound(named: "Glass")?.play()
                 
                 // Trigger times up notification
                 DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) {
@@ -136,8 +188,41 @@ class NotchViewModel: ObservableObject {
         }
     }
     
+    func pausePomodoro() {
+        guard isPomodoroActive, !isPomodoroPaused else { return }
+        isPomodoroPaused = true
+        pomodoroTimer?.invalidate()
+        pomodoroTimer = nil
+    }
+    
+    func resumePomodoro() {
+        guard isPomodoroActive, isPomodoroPaused else { return }
+        isPomodoroPaused = false
+        pomodoroTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            guard let self = self else { return }
+            if self.pomodoroRemaining > 0 {
+                self.pomodoroRemaining -= 1
+            } else {
+                self.stopPomodoro()
+                self.showTimesUp = true
+                NSSound(named: "Glass")?.play()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) {
+                    self.showTimesUp = false
+                }
+            }
+        }
+    }
+    
+    func addPomodoroMinutes(_ minutes: Double) {
+        guard isPomodoroActive else { return }
+        let extra = minutes * 60
+        pomodoroTotal += extra
+        pomodoroRemaining += extra
+    }
+    
     func stopPomodoro() {
         isPomodoroActive = false
+        isPomodoroPaused = false
         pomodoroTimer?.invalidate()
         pomodoroTimer = nil
     }
@@ -160,12 +245,25 @@ class NotchViewModel: ObservableObject {
             self?.triggerDeviceHUD(name: name, connected: false)
         }
         HardwareMonitor.shared.start()
+        
+        BatteryMonitor.shared.onPowerStateChanged = { [weak self] isAC, isCharging, level in
+            self?.triggerBatteryHUD(isAC: isAC, isCharging: isCharging, level: level)
+        }
+        BatteryMonitor.shared.start()
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            let initialPower = BatteryMonitor.shared.readPowerInfo()
+            self.isACConnected = initialPower.isAC
+            self.isBatteryCharging = initialPower.isCharging
+            self.batteryLevel = initialPower.level
+        }
     }
     
     func triggerVolumeHUD(volume: Float) {
         withAnimation(.spring(response: 0.35, dampingFraction: 0.6)) {
             self.currentVolume = volume
             self.showVolumeHUD = true
+            self.showBatteryHUD = false
             self.showDeviceHUD = false
             self.showTimesUp = false
         }
@@ -203,16 +301,38 @@ class NotchViewModel: ObservableObject {
             self.deviceIcon = icon
             self.isDeviceConnected = connected
             self.showDeviceHUD = true
+            self.showBatteryHUD = false
             self.showVolumeHUD = false
             self.showTimesUp = false
         }
         scheduleHUDDismiss()
     }
     
-    private func scheduleHUDDismiss() {
+    func triggerBatteryHUD(isAC: Bool, isCharging: Bool, level: Int) {
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.6)) {
+            self.isACConnected = isAC
+            self.isBatteryCharging = isCharging
+            self.batteryLevel = level
+            self.showBatteryHUD = true
+            self.showVolumeHUD = false
+            self.showDeviceHUD = false
+            self.showClipboardHUD = false
+            self.showTimesUp = false
+            self.showAgendaHUD = false
+        }
+        
+        if isAC {
+            NSSound(named: "Glass")?.play()
+        }
+        
+        scheduleHUDDismiss(duration: isAC ? 3.5 : 2.5)
+    }
+    
+    private func scheduleHUDDismiss(duration: Double = 3.0) {
         hudDismissTimer?.invalidate()
-        hudDismissTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: false) { [weak self] _ in
+        hudDismissTimer = Timer.scheduledTimer(withTimeInterval: duration, repeats: false) { [weak self] _ in
             withAnimation(.spring(response: 0.35, dampingFraction: 0.6)) {
+                self?.showBatteryHUD = false
                 self?.showVolumeHUD = false
                 self?.showDeviceHUD = false
                 self?.showClipboardHUD = false
@@ -278,19 +398,24 @@ class NotchViewModel: ObservableObject {
     }
     
     private func fetchMedia() {
-        MediaRemoteHelper.shared.fetchNowPlaying { [weak self] title, artist, img, isPlaying, duration, elapsed in
+        MediaRemoteHelper.shared.fetchNowPlaying { [weak self] title, artist, img, isPlaying, duration, elapsed, bundleId, appName in
             guard let self = self else { return }
+            
+            self.playerBundleId = bundleId
+            self.playerAppName = appName ?? ""
             
             if let title = title {
                 if self.currentSong != title {
                     self.currentSong = title
                     self.currentArtist = artist ?? ""
                     
-                    // Fetch new lyrics
+                    // Fetch new lyrics only if enabled (default is off)
                     self.lyrics = []
                     self.currentLyricIndex = -1
-                    LyricsManager.shared.fetchLyrics(for: title, artist: artist ?? "") { newLyrics in
-                        self.lyrics = newLyrics
+                    if UserDefaults.standard.bool(forKey: "enableLyrics") {
+                        LyricsManager.shared.fetchLyrics(for: title, artist: artist ?? "") { newLyrics in
+                            self.lyrics = newLyrics
+                        }
                     }
                 }
                 
@@ -382,6 +507,7 @@ class NotchViewModel: ObservableObject {
                     self.clipboardIcon = icon
                     self.clipboardIsCut = isCut
                     self.showClipboardHUD = true
+                    self.showBatteryHUD = false
                     self.showDeviceHUD = false
                     self.showVolumeHUD = false
                     self.showTimesUp = false
@@ -393,13 +519,35 @@ class NotchViewModel: ObservableObject {
                     var currentItems = self.clipboardItems
                     currentItems.removeAll { $0 == newString }
                     currentItems.insert(newString, at: 0)
-                    if currentItems.count > 3 {
-                        currentItems = Array(currentItems.prefix(3))
+                    if currentItems.count > 25 {
+                        currentItems = Array(currentItems.prefix(25))
                     }
                     self.clipboardItems = currentItems
                 }
             }
         }
+    }
+    
+    func togglePinClipboard(item: String) {
+        if pinnedClipboardItems.contains(item) {
+            pinnedClipboardItems.removeAll { $0 == item }
+        } else {
+            pinnedClipboardItems.insert(item, at: 0)
+        }
+    }
+    
+    func isClipboardPinned(item: String) -> Bool {
+        return pinnedClipboardItems.contains(item)
+    }
+    
+    var sortedClipboardItems: [String] {
+        let pinned = clipboardItems.filter { isClipboardPinned(item: $0) }
+        let unpinned = clipboardItems.filter { !isClipboardPinned(item: $0) }
+        return pinned + unpinned
+    }
+    
+    func clearUnpinnedClipboard() {
+        clipboardItems = clipboardItems.filter { isClipboardPinned(item: $0) }
     }
     
     func startAgendaPolling() {
@@ -425,6 +573,7 @@ class NotchViewModel: ObservableObject {
                     withAnimation(.spring(response: 0.35, dampingFraction: 0.6)) {
                         self.agendaHUDMessage = "\(event.title) — 5 menit lagi"
                         self.showAgendaHUD = true
+                        self.showBatteryHUD = false
                         self.showDeviceHUD = false
                         self.showVolumeHUD = false
                         self.showTimesUp = false
@@ -573,34 +722,225 @@ struct MarqueeText: View {
 struct DropZoneCardView: View {
     @ObservedObject var viewModel: NotchViewModel
     
+    private var totalFilesSize: Int64 {
+        viewModel.stagedFiles.reduce(Int64(0)) { $0 + Self.getFileSize(for: $1) }
+    }
+    
+    static func formatFileSize(_ bytes: Int64) -> String {
+        let formatter = ByteCountFormatter()
+        formatter.allowedUnits = [.useKB, .useMB, .useGB]
+        formatter.countStyle = .file
+        return formatter.string(fromByteCount: bytes)
+    }
+    
+    static func getFileSize(for url: URL) -> Int64 {
+        if let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
+           let size = attrs[.size] as? Int64 {
+            return size
+        }
+        return 0
+    }
+    
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(LanguageManager.tr("Drop Zone"))
-                .font(.system(size: 14, weight: .bold))
-                .foregroundColor(.white)
+        VStack(spacing: 8) {
+            // Header
+            HStack {
+                HStack(spacing: 6) {
+                    Image(systemName: "tray.and.arrow.down.fill")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(.cyan)
+                    Text(LanguageManager.tr("Drop Zone"))
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundColor(.white)
+                    
+                    if !viewModel.stagedFiles.isEmpty {
+                        Text("\(viewModel.stagedFiles.count) • \(Self.formatFileSize(totalFilesSize))")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundColor(.cyan)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.cyan.opacity(0.2))
+                            .clipShape(Capsule())
+                    }
+                }
+                
+                Spacer()
+                
+                if !viewModel.stagedFiles.isEmpty {
+                    HStack(spacing: 6) {
+                        Button(action: {
+                            let picker = NSSharingServicePicker(items: viewModel.stagedFiles)
+                            if let window = NSApp.keyWindow ?? NSApp.windows.first, let contentView = window.contentView {
+                                picker.show(relativeTo: .zero, of: contentView, preferredEdge: .minY)
+                            }
+                        }) {
+                            HStack(spacing: 3) {
+                                Image(systemName: "square.and.arrow.up")
+                                    .font(.system(size: 10))
+                                Text(LanguageManager.tr("Share All"))
+                                    .font(.system(size: 11, weight: .medium))
+                            }
+                            .foregroundColor(.white.opacity(0.8))
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .background(Color.white.opacity(0.08))
+                            .cornerRadius(6)
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                        
+                        Button(action: {
+                            withAnimation(.spring(response: 0.35, dampingFraction: 0.7)) {
+                                viewModel.stagedFiles.removeAll()
+                            }
+                        }) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "trash")
+                                    .font(.system(size: 10))
+                                Text(LanguageManager.tr("Clear All"))
+                                    .font(.system(size: 11, weight: .medium))
+                            }
+                            .foregroundColor(.white.opacity(0.6))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(Color.white.opacity(0.08))
+                            .cornerRadius(6)
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                    }
+                }
+            }
+            .padding(.top, 2)
             
             if viewModel.stagedFiles.isEmpty {
-                Text(LanguageManager.tr("Drag files here to store temporarily."))
-                    .font(.system(size: 12))
-                    .foregroundColor(.gray)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                // Drop Area Shelf Empty State
+                ZStack {
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(Color.white.opacity(0.03))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12)
+                                .stroke(
+                                    LinearGradient(
+                                        colors: [Color.cyan.opacity(0.4), Color.blue.opacity(0.2), Color.white.opacity(0.1)],
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing
+                                    ),
+                                    style: StrokeStyle(lineWidth: 1.5, dash: [6, 4])
+                                )
+                        )
+                    
+                    HStack(spacing: 14) {
+                        ZStack {
+                            Circle()
+                                .fill(
+                                    LinearGradient(
+                                        colors: [Color.cyan.opacity(0.25), Color.blue.opacity(0.15)],
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing
+                                    )
+                                )
+                                .frame(width: 42, height: 42)
+                            
+                            Image(systemName: "arrow.down.doc.fill")
+                                .font(.system(size: 19, weight: .semibold))
+                                .foregroundColor(.cyan)
+                        }
+                        
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(LanguageManager.tr("Drop Files Here"))
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundColor(.white)
+                            
+                            Text(LanguageManager.tr("Quick shelf to drag & drop files anywhere"))
+                                .font(.system(size: 11))
+                                .foregroundColor(.white.opacity(0.5))
+                                .lineLimit(1)
+                        }
+                        
+                        Spacer()
+                    }
+                    .padding(.horizontal, 16)
+                }
+                .frame(height: 72)
+                .padding(.top, 2)
             } else {
                 ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 12) {
+                    HStack(spacing: 10) {
                         ForEach(viewModel.stagedFiles, id: \.self) { url in
-                            VStack {
-                                Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
-                                    .resizable()
-                                    .frame(width: 32, height: 32)
+                            VStack(spacing: 5) {
+                                ZStack(alignment: .topTrailing) {
+                                    Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
+                                        .resizable()
+                                        .frame(width: 34, height: 34)
+                                        .padding(4)
+                                    
+                                    Button(action: {
+                                        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                                            viewModel.stagedFiles.removeAll { $0 == url }
+                                        }
+                                    }) {
+                                        Image(systemName: "xmark.circle.fill")
+                                            .font(.system(size: 12))
+                                            .foregroundColor(.white.opacity(0.7))
+                                    }
+                                    .buttonStyle(PlainButtonStyle())
+                                    .offset(x: 4, y: -4)
+                                }
+                                
                                 Text(url.lastPathComponent)
-                                    .font(.system(size: 10))
+                                    .font(.system(size: 10, weight: .medium))
                                     .foregroundColor(.white)
                                     .lineLimit(1)
-                                    .frame(width: 50)
+                                    .frame(width: 62)
+                                
+                                Text(Self.formatFileSize(Self.getFileSize(for: url)))
+                                    .font(.system(size: 8, weight: .regular))
+                                    .foregroundColor(.white.opacity(0.45))
+                                    .lineLimit(1)
+                                
+                                HStack(spacing: 6) {
+                                    // Quick Look / Open
+                                    Button(action: {
+                                        NSWorkspace.shared.open(url)
+                                    }) {
+                                        Image(systemName: "arrow.up.forward.app")
+                                            .font(.system(size: 9))
+                                            .foregroundColor(.white.opacity(0.7))
+                                            .padding(3)
+                                            .background(Color.white.opacity(0.08))
+                                            .clipShape(Circle())
+                                    }
+                                    .buttonStyle(PlainButtonStyle())
+                                    .help(LanguageManager.tr("Open file"))
+                                    
+                                    // Share / AirDrop
+                                    Button(action: {
+                                        let picker = NSSharingServicePicker(items: [url])
+                                        if let window = NSApp.keyWindow ?? NSApp.windows.first, let contentView = window.contentView {
+                                            picker.show(relativeTo: .zero, of: contentView, preferredEdge: .minY)
+                                        }
+                                    }) {
+                                        Image(systemName: "square.and.arrow.up")
+                                            .font(.system(size: 9))
+                                            .foregroundColor(.white.opacity(0.7))
+                                            .padding(3)
+                                            .background(Color.white.opacity(0.08))
+                                            .clipShape(Circle())
+                                    }
+                                    .buttonStyle(PlainButtonStyle())
+                                    .help(LanguageManager.tr("Share or AirDrop"))
+                                }
+                                .padding(.top, 2)
                             }
-                            .padding(8)
-                            .background(Color.white.opacity(0.1))
-                            .cornerRadius(8)
+                            .padding(.vertical, 6)
+                            .padding(.horizontal, 6)
+                            .background(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .fill(Color.white.opacity(0.07))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 10)
+                                            .stroke(Color.white.opacity(0.1), lineWidth: 0.5)
+                                    )
+                            )
                             .overlay(
                                 DragSourceOverlay(url: url) {
                                     withAnimation(.spring(response: 0.35, dampingFraction: 0.6)) {
@@ -609,7 +949,17 @@ struct DropZoneCardView: View {
                                 }
                             )
                             .contextMenu {
-                                Button("Remove") {
+                                Button(LanguageManager.tr("Open file")) {
+                                    NSWorkspace.shared.open(url)
+                                }
+                                Button(LanguageManager.tr("Share or AirDrop")) {
+                                    let picker = NSSharingServicePicker(items: [url])
+                                    if let window = NSApp.keyWindow ?? NSApp.windows.first, let contentView = window.contentView {
+                                        picker.show(relativeTo: .zero, of: contentView, preferredEdge: .minY)
+                                    }
+                                }
+                                Divider()
+                                Button(LanguageManager.tr("Remove")) {
                                     withAnimation {
                                         viewModel.stagedFiles.removeAll { $0 == url }
                                     }
@@ -617,101 +967,248 @@ struct DropZoneCardView: View {
                             }
                         }
                     }
+                    .padding(.vertical, 2)
                 }
             }
         }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 16)
     }
 }
 
 // MARK: - Pomodoro View
 struct PomodoroTimerView: View {
     @ObservedObject var viewModel: NotchViewModel
-    @State private var customMinutes: String = ""
+    @State private var selectedMinutes: Double = 25
+    @State private var isBlinking = false
     
     var body: some View {
-        VStack(spacing: 12) {
-            Text(LanguageManager.tr("Focus Timer"))
-                .font(.system(size: 14, weight: .bold))
-                .foregroundColor(.white)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            
-            HStack(spacing: 16) {
-                Button(action: {
-                    viewModel.startPomodoro(minutes: 25)
-                }) {
-                    VStack {
-                        Image(systemName: "brain.head.profile")
-                            .font(.system(size: 20))
-                        Text("25m")
-                            .font(.system(size: 12))
-                    }
-                    .foregroundColor(.white)
-                    .frame(width: 60, height: 50)
-                    .background(Color.white.opacity(0.1))
-                    .cornerRadius(8)
-                }.buttonStyle(PlainButtonStyle())
-                
-                Button(action: {
-                    viewModel.startPomodoro(minutes: 5)
-                }) {
-                    VStack {
-                        Image(systemName: "cup.and.saucer.fill")
-                            .font(.system(size: 20))
-                        Text("5m")
-                            .font(.system(size: 12))
-                    }
-                    .foregroundColor(.white)
-                    .frame(width: 60, height: 50)
-                    .background(Color.white.opacity(0.1))
-                    .cornerRadius(8)
-                }.buttonStyle(PlainButtonStyle())
-                
-                HStack(spacing: 8) {
-                    TextField("m", text: $customMinutes)
-                        .textFieldStyle(PlainTextFieldStyle())
-                        .font(.system(size: 14))
+        VStack(spacing: 8) {
+            // Header
+            HStack {
+                HStack(spacing: 6) {
+                    Image(systemName: "stopwatch.fill")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(.orange)
+                    Text(LanguageManager.tr("Focus Timer"))
+                        .font(.system(size: 13, weight: .bold))
                         .foregroundColor(.white)
-                        .multilineTextAlignment(.center)
-                        .frame(width: 30)
                     
-                    Button(action: {
-                        if let min = Double(customMinutes) {
-                            viewModel.startPomodoro(minutes: min)
-                        }
-                    }) {
-                        Image(systemName: "play.fill")
-                            .font(.system(size: 14))
-                            .foregroundColor(.white)
+                    if viewModel.isPomodoroActive {
+                        Circle()
+                            .fill(Color.orange)
+                            .frame(width: 6, height: 6)
+                            .opacity(isBlinking ? 0.3 : 1.0)
+                            .animation(.easeInOut(duration: 0.8).repeatForever(), value: isBlinking)
+                            .onAppear { isBlinking = true }
                     }
-                    .buttonStyle(PlainButtonStyle())
                 }
-                .frame(width: 70, height: 50)
-                .background(Color.white.opacity(0.1))
-                .cornerRadius(8)
+                
+                Spacer()
                 
                 if viewModel.isPomodoroActive {
-                    Button(action: {
-                        viewModel.stopPomodoro()
-                    }) {
-                        VStack {
-                            Image(systemName: "stop.fill")
-                                .font(.system(size: 20))
-                            Text(LanguageManager.tr("Stop"))
-                                .font(.system(size: 12))
-                        }
-                        .foregroundColor(.red)
-                        .frame(width: 60, height: 50)
-                        .background(Color.white.opacity(0.1))
-                        .cornerRadius(8)
-                    }.buttonStyle(PlainButtonStyle())
+                    Text(LanguageManager.tr("Focus Session"))
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(.orange)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(Color.orange.opacity(0.15))
+                        .clipShape(Capsule())
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.top, 2)
+            
+            if viewModel.isPomodoroActive {
+                // ACTIVE STATE
+                HStack(spacing: 16) {
+                    // Circular Progress Ring
+                    ZStack {
+                        Circle()
+                            .stroke(Color.white.opacity(0.1), lineWidth: 5)
+                            .frame(width: 68, height: 68)
+                        
+                        Circle()
+                            .trim(from: 0, to: CGFloat(viewModel.pomodoroTotal > 0 ? viewModel.pomodoroRemaining / viewModel.pomodoroTotal : 0))
+                            .stroke(
+                                LinearGradient(colors: [.orange, .yellow], startPoint: .topLeading, endPoint: .bottomTrailing),
+                                style: StrokeStyle(lineWidth: 5, lineCap: .round)
+                            )
+                            .frame(width: 68, height: 68)
+                            .rotationEffect(.degrees(-90))
+                            .animation(.linear(duration: 0.5), value: viewModel.pomodoroRemaining)
+                        
+                        Text(timeString(from: viewModel.pomodoroRemaining))
+                            .font(.system(size: 14, weight: .bold, design: .monospaced))
+                            .foregroundColor(.white)
+                    }
+                    
+                    // Controls
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(spacing: 8) {
+                            // Pause / Resume Button
+                            Button(action: {
+                                if viewModel.isPomodoroPaused {
+                                    viewModel.resumePomodoro()
+                                } else {
+                                    viewModel.pausePomodoro()
+                                }
+                            }) {
+                                HStack(spacing: 5) {
+                                    Image(systemName: viewModel.isPomodoroPaused ? "play.fill" : "pause.fill")
+                                        .font(.system(size: 10, weight: .bold))
+                                    Text(viewModel.isPomodoroPaused ? LanguageManager.tr("Resume") : LanguageManager.tr("Pause"))
+                                        .font(.system(size: 11, weight: .semibold))
+                                }
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 7)
+                                .background(Color.orange)
+                                .cornerRadius(8)
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                            
+                            // +5 Min Button
+                            Button(action: {
+                                viewModel.addPomodoroMinutes(5)
+                            }) {
+                                Text("+5 " + LanguageManager.tr("min"))
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundColor(.white)
+                                    .padding(.horizontal, 9)
+                                    .padding(.vertical, 7)
+                                    .background(Color.white.opacity(0.1))
+                                    .cornerRadius(8)
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                            
+                            // Stop Button
+                            Button(action: {
+                                withAnimation {
+                                    viewModel.stopPomodoro()
+                                }
+                            }) {
+                                Image(systemName: "stop.fill")
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundColor(.red)
+                                    .padding(8)
+                                    .background(Color.red.opacity(0.15))
+                                    .cornerRadius(8)
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                        }
+                    }
+                    
+                    Spacer()
+                }
+                .padding(.top, 4)
+            } else {
+                // INACTIVE / SELECTION STATE
+                HStack(spacing: 12) {
+                    // Presets
+                    HStack(spacing: 8) {
+                        presetButton(minutes: 25, title: "25m", subtitle: "Focus", icon: "brain.head.profile")
+                        presetButton(minutes: 5, title: "5m", subtitle: "Break", icon: "cup.and.saucer.fill")
+                        presetButton(minutes: 15, title: "15m", subtitle: "Rest", icon: "leaf.fill")
+                    }
+                    
+                    // Stepper / Custom & Start
+                    VStack(spacing: 6) {
+                        HStack(spacing: 6) {
+                            Button(action: {
+                                if selectedMinutes > 5 {
+                                    selectedMinutes -= 5
+                                }
+                            }) {
+                                Image(systemName: "minus")
+                                    .font(.system(size: 9, weight: .bold))
+                                    .foregroundColor(.white.opacity(0.7))
+                                    .frame(width: 22, height: 22)
+                                    .background(Color.white.opacity(0.1))
+                                    .clipShape(Circle())
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                            
+                            Text("\(Int(selectedMinutes)) " + LanguageManager.tr("min"))
+                                .font(.system(size: 11, weight: .bold, design: .monospaced))
+                                .foregroundColor(.white)
+                                .frame(width: 44)
+                            
+                            Button(action: {
+                                if selectedMinutes < 120 {
+                                    selectedMinutes += 5
+                                }
+                            }) {
+                                Image(systemName: "plus")
+                                    .font(.system(size: 9, weight: .bold))
+                                    .foregroundColor(.white.opacity(0.7))
+                                    .frame(width: 22, height: 22)
+                                    .background(Color.white.opacity(0.1))
+                                    .clipShape(Circle())
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                        }
+                        
+                        Button(action: {
+                            withAnimation(.spring(response: 0.35, dampingFraction: 0.7)) {
+                                viewModel.startPomodoro(minutes: selectedMinutes)
+                            }
+                        }) {
+                            HStack(spacing: 5) {
+                                Image(systemName: "play.fill")
+                                    .font(.system(size: 9, weight: .bold))
+                                Text(LanguageManager.tr("Start Focus"))
+                                    .font(.system(size: 11, weight: .bold))
+                            }
+                            .foregroundColor(.white)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 7)
+                            .background(
+                                LinearGradient(colors: [.orange, .red], startPoint: .leading, endPoint: .trailing)
+                            )
+                            .cornerRadius(8)
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                    }
+                    .frame(width: 104)
+                }
+                .padding(.top, 4)
+            }
         }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 16)
+    }
+    
+    private func presetButton(minutes: Double, title: String, subtitle: String, icon: String) -> some View {
+        let isSelected = selectedMinutes == minutes
+        return Button(action: {
+            withAnimation(.spring(response: 0.25, dampingFraction: 0.7)) {
+                selectedMinutes = minutes
+            }
+        }) {
+            VStack(spacing: 3) {
+                Image(systemName: icon)
+                    .font(.system(size: 15))
+                    .foregroundColor(isSelected ? .orange : .white.opacity(0.7))
+                Text(title)
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundColor(.white)
+                Text(LanguageManager.tr(subtitle))
+                    .font(.system(size: 9))
+                    .foregroundColor(.white.opacity(0.5))
+            }
+            .frame(maxWidth: .infinity, minHeight: 56)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(isSelected ? Color.orange.opacity(0.2) : Color.white.opacity(0.06))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(isSelected ? Color.orange.opacity(0.6) : Color.white.opacity(0.08), lineWidth: isSelected ? 1.5 : 0.5)
+                    )
+            )
+        }
+        .buttonStyle(PlainButtonStyle())
+    }
+    
+    private func timeString(from time: TimeInterval) -> String {
+        let min = Int(time) / 60
+        let sec = Int(time) % 60
+        return String(format: "%02d:%02d", min, sec)
     }
 }
 
@@ -720,27 +1217,59 @@ struct DetachedPomodoroView: View {
     @ObservedObject var viewModel: NotchViewModel
     
     var body: some View {
-        HStack(spacing: 6) {
-            ZStack {
-                Circle()
-                    .stroke(Color.white.opacity(0.2), lineWidth: 3)
-                    .frame(width: 18, height: 18)
-                
-                Circle()
-                    .trim(from: 0, to: CGFloat(viewModel.pomodoroTotal > 0 ? viewModel.pomodoroRemaining / viewModel.pomodoroTotal : 0))
-                    .stroke(Color.orange, style: StrokeStyle(lineWidth: 3, lineCap: .round))
-                    .frame(width: 18, height: 18)
-                    .rotationEffect(.degrees(-90))
+        Button(action: {
+            withAnimation(.spring(response: 0.38, dampingFraction: 0.72)) {
+                viewModel.selectedTab = .pomodoro
+                viewModel.isExpanded = true
             }
-            
-            Text(timeString(from: viewModel.pomodoroRemaining))
-                .font(.system(size: 12, weight: .bold, design: .monospaced))
-                .foregroundColor(.orange)
+        }) {
+            HStack(spacing: 6) {
+                ZStack {
+                    Circle()
+                        .stroke(Color.white.opacity(0.2), lineWidth: 3)
+                        .frame(width: 18, height: 18)
+                    
+                    Circle()
+                        .trim(from: 0, to: CGFloat(viewModel.pomodoroTotal > 0 ? viewModel.pomodoroRemaining / viewModel.pomodoroTotal : 0))
+                        .stroke(
+                            viewModel.isPomodoroPaused ? Color.yellow : Color.orange,
+                            style: StrokeStyle(lineWidth: 3, lineCap: .round)
+                        )
+                        .frame(width: 18, height: 18)
+                        .rotationEffect(.degrees(-90))
+                }
+                
+                Text(timeString(from: viewModel.pomodoroRemaining))
+                    .font(.system(size: 12, weight: .bold, design: .monospaced))
+                    .foregroundColor(viewModel.isPomodoroPaused ? .yellow : .orange)
+            }
+            .padding(.horizontal, 10)
+            .frame(height: 34)
+            .background(Color.black)
+            .clipShape(Capsule())
+            .overlay(
+                Capsule()
+                    .stroke((viewModel.isPomodoroPaused ? Color.yellow : Color.orange).opacity(0.4), lineWidth: 1)
+            )
+            .shadow(color: (viewModel.isPomodoroPaused ? Color.yellow : Color.orange).opacity(0.3), radius: 5, x: 0, y: 1)
         }
-        .padding(.horizontal, 10)
-        .frame(height: 34)
-        .background(Color.black)
-        .clipShape(Capsule())
+        .buttonStyle(PlainButtonStyle())
+        .help(LanguageManager.tr("Focus Timer: Click to open"))
+        .contextMenu {
+            Button(viewModel.isPomodoroPaused ? LanguageManager.tr("Resume") : LanguageManager.tr("Pause")) {
+                if viewModel.isPomodoroPaused {
+                    viewModel.resumePomodoro()
+                } else {
+                    viewModel.pausePomodoro()
+                }
+            }
+            Divider()
+            Button(LanguageManager.tr("Stop")) {
+                withAnimation {
+                    viewModel.stopPomodoro()
+                }
+            }
+        }
     }
     
     private func timeString(from time: TimeInterval) -> String {
@@ -754,9 +1283,13 @@ struct DetachedPomodoroView: View {
 // MARK: - Calculator View
 struct CalculatorView: View {
     @ObservedObject var viewModel: NotchViewModel
+    @State private var showCopiedCheck: Bool = false
     
     let columns = [
-        GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())
+        GridItem(.flexible(), spacing: 6),
+        GridItem(.flexible(), spacing: 6),
+        GridItem(.flexible(), spacing: 6),
+        GridItem(.flexible(), spacing: 6)
     ]
     let buttons = [
         ["7", "8", "9", "÷"],
@@ -766,36 +1299,116 @@ struct CalculatorView: View {
     ]
     
     var body: some View {
-        VStack(spacing: 4) {
-            Text(viewModel.calcInput)
-                .font(.system(size: 24, weight: .medium, design: .monospaced))
-                .foregroundColor(.white)
-                .frame(maxWidth: .infinity, alignment: .trailing)
-                .padding(.horizontal, 24)
-                .padding(.top, 12)
+        VStack(spacing: 6) {
+            // Expression Bar & Quick Actions
+            HStack {
+                Text(viewModel.calcExpression)
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundColor(.white.opacity(0.55))
+                    .lineLimit(1)
+                
+                Spacer()
+                
+                // Backspace button
+                Button(action: handleBackspace) {
+                    Image(systemName: "delete.left")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.6))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                        .background(Color.white.opacity(0.08))
+                        .cornerRadius(5)
+                }
+                .buttonStyle(PlainButtonStyle())
+                .help(LanguageManager.tr("Delete last digit"))
+                
+                // Copy button
+                Button(action: copyResult) {
+                    HStack(spacing: 3) {
+                        Image(systemName: showCopiedCheck ? "checkmark" : "doc.on.doc")
+                            .font(.system(size: 9, weight: .bold))
+                        if showCopiedCheck {
+                            Text(LanguageManager.tr("Copied!"))
+                                .font(.system(size: 9, weight: .bold))
+                        }
+                    }
+                    .foregroundColor(showCopiedCheck ? .green : .white.opacity(0.6))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(showCopiedCheck ? Color.green.opacity(0.18) : Color.white.opacity(0.08))
+                    .cornerRadius(5)
+                }
+                .buttonStyle(PlainButtonStyle())
+                .help(LanguageManager.tr("Copy result"))
+            }
+            .frame(height: 18)
+            .padding(.horizontal, 4)
             
-            LazyVGrid(columns: columns, spacing: 8) {
+            // Main Number Display
+            Button(action: copyResult) {
+                Text(viewModel.calcInput)
+                    .font(.system(size: 26, weight: .semibold, design: .monospaced))
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                    .padding(.horizontal, 6)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.5)
+                    .frame(height: 32)
+            }
+            .buttonStyle(PlainButtonStyle())
+            .help(LanguageManager.tr("Click to copy"))
+            
+            // Buttons Grid
+            LazyVGrid(columns: columns, spacing: 6) {
                 ForEach(buttons.flatMap { $0 }, id: \.self) { btn in
+                    let isActiveOp = viewModel.calcOperator == btn && viewModel.calcIsNewInput
                     Button(action: { handlePress(btn) }) {
                         Text(btn)
-                            .font(.system(size: 16, weight: .bold))
-                            .foregroundColor(.white)
-                            .frame(maxWidth: .infinity, minHeight: 28)
-                            .background(Color.white.opacity(0.15))
-                            .cornerRadius(6)
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundColor(isActiveOp ? .white : (isOperator(btn) ? .orange : .white))
+                            .frame(maxWidth: .infinity, minHeight: 32)
+                            .background(
+                                isActiveOp ? Color.orange : (isOperator(btn) ? Color.orange.opacity(0.2) : Color.white.opacity(0.12))
+                            )
+                            .cornerRadius(8)
+                            .shadow(color: isActiveOp ? Color.orange.opacity(0.4) : .clear, radius: 4, x: 0, y: 1)
                     }
                     .buttonStyle(PlainButtonStyle())
                 }
             }
-            .padding(.horizontal, 24)
-            .padding(.bottom, 12)
+        }
+    }
+    
+    private func isOperator(_ btn: String) -> Bool {
+        ["÷", "×", "-", "+", "="].contains(btn)
+    }
+    
+    private func handleBackspace() {
+        guard !viewModel.calcIsNewInput else { return }
+        if viewModel.calcInput.count > 1 {
+            viewModel.calcInput.removeLast()
+        } else {
+            viewModel.calcInput = "0"
+        }
+    }
+    
+    private func copyResult() {
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(viewModel.calcInput, forType: .string)
+        withAnimation(.spring(response: 0.25, dampingFraction: 0.6)) {
+            showCopiedCheck = true
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            withAnimation { showCopiedCheck = false }
         }
     }
     
     private func handlePress(_ btn: String) {
         if let num = Int(btn) {
-            if viewModel.calcInput == "0" {
+            if viewModel.calcIsNewInput || viewModel.calcInput == "0" {
                 viewModel.calcInput = "\(num)"
+                viewModel.calcIsNewInput = false
             } else {
                 viewModel.calcInput += "\(num)"
             }
@@ -803,14 +1416,33 @@ struct CalculatorView: View {
             viewModel.calcInput = "0"
             viewModel.calcPrevious = nil
             viewModel.calcOperator = nil
+            viewModel.calcExpression = ""
+            viewModel.calcIsNewInput = false
         } else if btn == "=" {
-            calculate()
-            viewModel.calcOperator = nil
+            if let op = viewModel.calcOperator, let prev = viewModel.calcPrevious, let current = Double(viewModel.calcInput) {
+                viewModel.calcExpression = "\(formatDouble(prev)) \(op) \(formatDouble(current)) ="
+                calculate()
+                viewModel.calcOperator = nil
+                viewModel.calcIsNewInput = true
+            }
         } else {
-            calculate()
+            // Operator pressed (+, -, ×, ÷)
+            if viewModel.calcOperator != nil && !viewModel.calcIsNewInput {
+                calculate()
+            } else {
+                viewModel.calcPrevious = Double(viewModel.calcInput)
+            }
             viewModel.calcOperator = btn
-            viewModel.calcPrevious = Double(viewModel.calcInput)
-            viewModel.calcInput = "0"
+            viewModel.calcExpression = "\(viewModel.calcInput) \(btn)"
+            viewModel.calcIsNewInput = true
+        }
+    }
+    
+    private func formatDouble(_ val: Double) -> String {
+        if val.truncatingRemainder(dividingBy: 1) == 0 && abs(val) < 1e12 {
+            return "\(Int(val))"
+        } else {
+            return String(format: "%g", val)
         }
     }
     
@@ -824,7 +1456,7 @@ struct CalculatorView: View {
         case "÷": result = current != 0 ? prev / current : 0
         default: break
         }
-        viewModel.calcInput = String(format: "%g", result)
+        viewModel.calcInput = formatDouble(result)
         viewModel.calcPrevious = result
     }
 }
@@ -832,61 +1464,79 @@ struct CalculatorView: View {
 // MARK: - Media Card View
 struct MediaCardView: View {
     @ObservedObject var viewModel: NotchViewModel
+    @AppStorage("enableLyrics") private var enableLyrics = false
     
     var body: some View {
         VStack(spacing: 8) {
             mediaInfoRow
             
-            // Animated Lyrics
-            if !viewModel.lyrics.isEmpty {
+            // Animated Lyrics (only if enabled and available)
+            if enableLyrics && !viewModel.lyrics.isEmpty {
                 lyricsSection
             }
         }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 16)
     }
     
     private var mediaInfoRow: some View {
-        HStack(spacing: 16) {
+        HStack(spacing: 12) {
             albumArt
             metadataSection
-            Spacer()
+            Spacer(minLength: 4)
             playbackControls
         }
     }
     
     @ViewBuilder
     private var albumArt: some View {
-        if let img = viewModel.artwork {
-            Image(nsImage: img)
-                .resizable()
-                .aspectRatio(contentMode: .fill)
-                .frame(width: 50, height: 50)
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                .shadow(color: .black.opacity(0.3), radius: 4, x: 0, y: 2)
-        } else {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color.gray.opacity(0.3))
-                .frame(width: 50, height: 50)
-                .overlay(
-                    Image(systemName: "music.note")
-                        .font(.system(size: 20))
-                        .foregroundColor(.white.opacity(0.5))
-                )
+        Button(action: {
+            MediaRemoteHelper.shared.activatePlayerApp()
+        }) {
+            ZStack(alignment: .bottomTrailing) {
+                if let img = viewModel.artwork {
+                    Image(nsImage: img)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .frame(width: 48, height: 48)
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        .shadow(color: .black.opacity(0.3), radius: 4, x: 0, y: 2)
+                } else {
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(Color.white.opacity(0.08))
+                        .frame(width: 48, height: 48)
+                        .overlay(
+                            Image(systemName: "music.note")
+                                .font(.system(size: 18))
+                                .foregroundColor(.white.opacity(0.5))
+                        )
+                }
+                
+                // Mini Player App Badge
+                if let icon = viewModel.playerAppIcon {
+                    Image(nsImage: icon)
+                        .resizable()
+                        .frame(width: 15, height: 15)
+                        .clipShape(Circle())
+                        .overlay(Circle().stroke(Color.black, lineWidth: 1.5))
+                        .shadow(color: .black.opacity(0.5), radius: 2, x: 0, y: 1)
+                        .offset(x: 3, y: 3)
+                }
+            }
         }
+        .buttonStyle(PlainButtonStyle())
+        .help(viewModel.playerAppName.isEmpty ? LanguageManager.tr("Media Player") : "\(LanguageManager.tr("Open in")) \(viewModel.playerAppName)")
     }
     
     private var metadataSection: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 3) {
             Text(viewModel.currentSong)
-                .font(.system(size: 14, weight: .bold, design: .rounded))
+                .font(.system(size: 13, weight: .bold, design: .rounded))
                 .foregroundColor(.white)
                 .lineLimit(1)
             
             if !viewModel.currentArtist.isEmpty {
                 Text(viewModel.currentArtist)
-                    .font(.system(size: 12, weight: .regular))
-                    .foregroundColor(.gray)
+                    .font(.system(size: 11, weight: .regular))
+                    .foregroundColor(.white.opacity(0.6))
                     .lineLimit(1)
             }
             
@@ -894,33 +1544,45 @@ struct MediaCardView: View {
                 scrubberRow
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
     
     private var scrubberRow: some View {
         LiveScrubberView(viewModel: viewModel)
-            .padding(.top, 2)
+            .padding(.top, 1)
     }
     
     private var playbackControls: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 6) {
             Button(action: {
                 MediaRemoteHelper.shared.previousTrack()
             }) {
-                Image(systemName: "backward.fill").foregroundColor(.gray)
+                Image(systemName: "backward.fill")
+                    .font(.system(size: 12))
+                    .foregroundColor(.white.opacity(0.6))
+                    .frame(width: 26, height: 26)
+                    .contentShape(Rectangle())
             }.buttonStyle(PlainButtonStyle())
             
             Button(action: {
                 MediaRemoteHelper.shared.togglePlayPause()
             }) {
                 Image(systemName: viewModel.isPlaying ? "pause.fill" : "play.fill")
+                    .font(.system(size: 15))
                     .foregroundColor(.white)
-                    .font(.system(size: 18))
+                    .frame(width: 32, height: 32)
+                    .background(Color.white.opacity(0.12))
+                    .clipShape(Circle())
             }.buttonStyle(PlainButtonStyle())
             
             Button(action: {
                 MediaRemoteHelper.shared.nextTrack()
             }) {
-                Image(systemName: "forward.fill").foregroundColor(.gray)
+                Image(systemName: "forward.fill")
+                    .font(.system(size: 12))
+                    .foregroundColor(.white.opacity(0.6))
+                    .frame(width: 26, height: 26)
+                    .contentShape(Rectangle())
             }.buttonStyle(PlainButtonStyle())
         }
     }
@@ -986,27 +1648,320 @@ struct MediaCardView: View {
 
 struct ClipboardStackView: View {
     @ObservedObject var viewModel: NotchViewModel
+    @State private var copiedItemId: String? = nil
+    @State private var searchQuery: String = ""
+    
+    static func parseHexColor(_ text: String) -> Color? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasPrefix("#") else { return nil }
+        let hex = String(trimmed.dropFirst())
+        guard hex.count == 3 || hex.count == 6 || hex.count == 8 else { return nil }
+        var int: UInt64 = 0
+        guard Scanner(string: hex).scanHexInt64(&int) else { return nil }
+        let r, g, b, a: Double
+        if hex.count == 3 {
+            r = Double((int >> 8) * 17) / 255.0
+            g = Double((int >> 4 & 0xF) * 17) / 255.0
+            b = Double((int & 0xF) * 17) / 255.0
+            a = 1.0
+        } else if hex.count == 6 {
+            r = Double((int >> 16) & 0xFF) / 255.0
+            g = Double((int >> 8) & 0xFF) / 255.0
+            b = Double(int & 0xFF) / 255.0
+            a = 1.0
+        } else {
+            r = Double((int >> 24) & 0xFF) / 255.0
+            g = Double((int >> 16) & 0xFF) / 255.0
+            b = Double((int >> 8) & 0xFF) / 255.0
+            a = Double(int & 0xFF) / 255.0
+        }
+        return Color(.sRGB, red: r, green: g, blue: b, opacity: a)
+    }
+    
+    static func parseURL(_ text: String) -> URL? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if (trimmed.hasPrefix("http://") || trimmed.hasPrefix("https://")), let url = URL(string: trimmed), url.host != nil {
+            return url
+        }
+        return nil
+    }
+    
+    private var filteredItems: [String] {
+        let all = viewModel.sortedClipboardItems
+        if searchQuery.trimmingCharacters(in: .whitespaces).isEmpty {
+            return Array(all.prefix(3))
+        } else {
+            return Array(all.filter { $0.localizedCaseInsensitiveContains(searchQuery) }.prefix(3))
+        }
+    }
+    
     var body: some View {
-        VStack(spacing: 8) {
-            Text(LanguageManager.tr("Recent Clipboard"))
-                .font(.caption).foregroundColor(.gray).frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 20).padding(.top, 8)
-            if viewModel.clipboardItems.isEmpty {
-                Text(LanguageManager.tr("No recent items")).foregroundColor(.gray).font(.footnote).padding(.bottom, 12)
-            } else {
-                ForEach(viewModel.clipboardItems, id: \.self) { item in
-                    Button(action: {
-                        let pb = NSPasteboard.general
-                        pb.clearContents()
-                        pb.setString(item, forType: .string)
-                    }) {
-                        Text(item).lineLimit(1).font(.system(size: 13)).foregroundColor(.white)
-                            .padding(.vertical, 6).padding(.horizontal, 12).frame(maxWidth: .infinity, alignment: .leading)
-                            .background(Color.white.opacity(0.1)).cornerRadius(6)
+        VStack(spacing: 6) {
+            // Header
+            HStack {
+                HStack(spacing: 6) {
+                    Image(systemName: "doc.on.clipboard.fill")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(.blue)
+                    Text(LanguageManager.tr("Recent Clipboard"))
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundColor(.white)
+                    
+                    if !viewModel.clipboardItems.isEmpty {
+                        Text("\(viewModel.clipboardItems.count)")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundColor(.blue)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.blue.opacity(0.2))
+                            .clipShape(Capsule())
                     }
-                    .buttonStyle(PlainButtonStyle()).padding(.horizontal, 20)
                 }
-                .padding(.bottom, 12)
+                
+                Spacer()
+                
+                if !viewModel.clipboardItems.isEmpty {
+                    Button(action: {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.7)) {
+                            viewModel.clearUnpinnedClipboard()
+                        }
+                    }) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "trash")
+                                .font(.system(size: 10))
+                            Text(LanguageManager.tr("Clear"))
+                                .font(.system(size: 11, weight: .medium))
+                        }
+                        .foregroundColor(.white.opacity(0.6))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(Color.white.opacity(0.08))
+                        .cornerRadius(6)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                }
+            }
+            .padding(.top, 1)
+            
+            // Search Bar (shown when there are items)
+            if !viewModel.clipboardItems.isEmpty {
+                HStack(spacing: 6) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 10))
+                        .foregroundColor(.white.opacity(0.4))
+                    
+                    TextField(LanguageManager.tr("Search clipboard..."), text: $searchQuery)
+                        .textFieldStyle(PlainTextFieldStyle())
+                        .font(.system(size: 11))
+                        .foregroundColor(.white)
+                    
+                    if !searchQuery.isEmpty {
+                        Button(action: { searchQuery = "" }) {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 10))
+                                .foregroundColor(.white.opacity(0.45))
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                    }
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Color.white.opacity(0.06))
+                .cornerRadius(6)
+            }
+            
+            if viewModel.clipboardItems.isEmpty {
+                // Empty state card
+                ZStack {
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(Color.white.opacity(0.04))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12)
+                                .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                        )
+                    
+                    HStack(spacing: 14) {
+                        ZStack {
+                            Circle()
+                                .fill(
+                                    LinearGradient(
+                                        colors: [Color.blue.opacity(0.3), Color.indigo.opacity(0.15)],
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing
+                                    )
+                                )
+                                .frame(width: 42, height: 42)
+                            
+                            Image(systemName: "doc.on.clipboard")
+                                .font(.system(size: 20, weight: .medium))
+                                .foregroundColor(.blue)
+                        }
+                        
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(LanguageManager.tr("Clipboard is Empty"))
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundColor(.white)
+                            
+                            Text(LanguageManager.tr("Copied text and snippets will appear here"))
+                                .font(.system(size: 11))
+                                .foregroundColor(.white.opacity(0.5))
+                                .lineLimit(1)
+                        }
+                        
+                        Spacer()
+                        
+                        // Shortcut badge
+                        HStack(spacing: 2) {
+                            Text("⌘")
+                                .font(.system(size: 11, weight: .bold))
+                            Text("C")
+                                .font(.system(size: 11, weight: .bold))
+                        }
+                        .foregroundColor(.white.opacity(0.6))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.white.opacity(0.08))
+                        .cornerRadius(6)
+                    }
+                    .padding(.horizontal, 16)
+                }
+                .frame(height: 72)
+                .padding(.top, 2)
+            } else if filteredItems.isEmpty {
+                // Search has no matching items
+                HStack {
+                    Spacer()
+                    Text(LanguageManager.tr("No matching items"))
+                        .font(.system(size: 11))
+                        .foregroundColor(.white.opacity(0.45))
+                    Spacer()
+                }
+                .frame(height: 50)
+            } else {
+                VStack(spacing: 5) {
+                    ForEach(filteredItems, id: \.self) { item in
+                        let isPinned = viewModel.isClipboardPinned(item: item)
+                        let hexColor = Self.parseHexColor(item)
+                        let parsedURL = Self.parseURL(item)
+                        
+                        HStack(spacing: 8) {
+                            // Pin Button
+                            Button(action: {
+                                withAnimation(.spring(response: 0.25, dampingFraction: 0.7)) {
+                                    viewModel.togglePinClipboard(item: item)
+                                }
+                            }) {
+                                Image(systemName: isPinned ? "pin.fill" : "pin")
+                                    .font(.system(size: 9))
+                                    .foregroundColor(isPinned ? .orange : .white.opacity(0.3))
+                                    .padding(4)
+                                    .background(isPinned ? Color.orange.opacity(0.18) : Color.white.opacity(0.04))
+                                    .clipShape(Circle())
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                            .help(isPinned ? LanguageManager.tr("Unpin") : LanguageManager.tr("Pin to top"))
+                            
+                            // Smart Icon / Swatch
+                            if let color = hexColor {
+                                Circle()
+                                    .fill(color)
+                                    .frame(width: 14, height: 14)
+                                    .overlay(Circle().stroke(Color.white.opacity(0.3), lineWidth: 1))
+                            } else if parsedURL != nil {
+                                Image(systemName: "link")
+                                    .font(.system(size: 10))
+                                    .foregroundColor(.cyan)
+                            } else {
+                                Image(systemName: "text.alignleft")
+                                    .font(.system(size: 10))
+                                    .foregroundColor(.white.opacity(0.4))
+                            }
+                            
+                            Text(item)
+                                .lineLimit(1)
+                                .font(.system(size: 11, weight: .regular))
+                                .foregroundColor(.white)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            
+                            // Smart URL open button
+                            if let url = parsedURL {
+                                Button(action: {
+                                    NSWorkspace.shared.open(url)
+                                }) {
+                                    Image(systemName: "arrow.up.forward.square")
+                                        .font(.system(size: 11))
+                                        .foregroundColor(.cyan)
+                                        .padding(4)
+                                        .background(Color.cyan.opacity(0.12))
+                                        .clipShape(Circle())
+                                }
+                                .buttonStyle(PlainButtonStyle())
+                                .help(LanguageManager.tr("Open in browser"))
+                            }
+                            
+                            if copiedItemId == item {
+                                HStack(spacing: 3) {
+                                    Image(systemName: "checkmark")
+                                        .font(.system(size: 9, weight: .bold))
+                                    Text(LanguageManager.tr("Copied!"))
+                                        .font(.system(size: 9, weight: .semibold))
+                                }
+                                .foregroundColor(.green)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 3)
+                                .background(Color.green.opacity(0.15))
+                                .clipShape(Capsule())
+                            } else {
+                                Button(action: {
+                                    let pb = NSPasteboard.general
+                                    pb.clearContents()
+                                    pb.setString(item, forType: .string)
+                                    withAnimation(.spring(response: 0.25, dampingFraction: 0.6)) {
+                                        copiedItemId = item
+                                    }
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                                        if copiedItemId == item {
+                                            withAnimation { copiedItemId = nil }
+                                        }
+                                    }
+                                }) {
+                                    Image(systemName: "doc.on.doc")
+                                        .font(.system(size: 10))
+                                        .foregroundColor(.white.opacity(0.55))
+                                        .padding(4)
+                                        .background(Color.white.opacity(0.08))
+                                        .clipShape(Circle())
+                                }
+                                .buttonStyle(PlainButtonStyle())
+                                
+                                Button(action: {
+                                    withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                                        viewModel.clipboardItems.removeAll { $0 == item }
+                                        viewModel.pinnedClipboardItems.removeAll { $0 == item }
+                                    }
+                                }) {
+                                    Image(systemName: "xmark")
+                                        .font(.system(size: 9, weight: .bold))
+                                        .foregroundColor(.white.opacity(0.4))
+                                        .padding(4)
+                                        .background(Color.white.opacity(0.05))
+                                        .clipShape(Circle())
+                                }
+                                .buttonStyle(PlainButtonStyle())
+                            }
+                        }
+                        .padding(.vertical, 6)
+                        .padding(.horizontal, 10)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(isPinned ? Color.orange.opacity(0.08) : Color.white.opacity(0.06))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .stroke(isPinned ? Color.orange.opacity(0.3) : Color.white.opacity(0.06), lineWidth: 0.8)
+                                )
+                        )
+                    }
+                }
             }
         }
     }
@@ -1253,6 +2208,7 @@ class DragSourceNSView: NSView, NSDraggingSource {
 // MARK: - Waveform View
 struct WaveformView: View {
     var isPlaying: Bool
+    var color: Color = .orange
     @State private var heights: [CGFloat] = [4, 4, 4, 4]
     @State private var animating = false
     
@@ -1260,8 +2216,9 @@ struct WaveformView: View {
         HStack(spacing: 2) {
             ForEach(0..<4, id: \.self) { i in
                 RoundedRectangle(cornerRadius: 1.5)
-                    .fill(Color.orange)
+                    .fill(color == .clear ? Color.orange : color)
                     .frame(width: 3, height: heights[i])
+                    .animation(.easeInOut(duration: 0.3), value: color)
             }
         }
         .onChange(of: isPlaying) { playing in
@@ -1448,7 +2405,7 @@ struct CompactMediaView: View {
             
             Spacer(minLength: 4)
             
-            WaveformView(isPlaying: viewModel.isPlaying)
+            WaveformView(isPlaying: viewModel.isPlaying, color: viewModel.accentColor)
         }
         .padding(.horizontal, 28)
         .frame(height: 34)
@@ -1516,22 +2473,247 @@ struct TimesUpBlossomView: View {
     }
 }
 
+// MARK: - Battery HUD View
+struct BatteryBlossomView: View {
+    var level: Int
+    var isCharging: Bool
+    var isAC: Bool
+    
+    @State private var boltPulse = false
+    
+    var body: some View {
+        HStack(spacing: 9) {
+            // Battery Capsule Icon
+            HStack(spacing: 1.5) {
+                ZStack(alignment: .leading) {
+                    // Outer border
+                    RoundedRectangle(cornerRadius: 4)
+                        .stroke(Color.white.opacity(0.35), lineWidth: 1.2)
+                        .frame(width: 27, height: 14)
+                    
+                    // Fill
+                    RoundedRectangle(cornerRadius: 2.2)
+                        .fill(fillGradient)
+                        .frame(width: max(2, 23 * CGFloat(min(100, max(0, level))) / 100), height: 10)
+                        .padding(.leading, 2)
+                }
+                
+                // Terminal tip (right end of battery)
+                RoundedRectangle(cornerRadius: 1)
+                    .fill(Color.white.opacity(0.4))
+                    .frame(width: 2, height: 5.5)
+            }
+            .frame(width: 32, height: 16)
+            
+            // Lightning Bolt indicator
+            if isCharging || isAC {
+                Image(systemName: "bolt.fill")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundColor(Color.green)
+                    .scaleEffect(boltPulse ? 1.2 : 0.9)
+                    .shadow(color: Color.green.opacity(0.8), radius: 5)
+                    .animation(.easeInOut(duration: 0.7).repeatForever(autoreverses: true), value: boltPulse)
+                    .onAppear { boltPulse = true }
+            }
+            
+            // Battery Percentage & Status
+            HStack(spacing: 5) {
+                Text("\(level)%")
+                    .font(.system(size: 14, weight: .bold, design: .rounded))
+                    .foregroundColor(.white)
+                
+                Text("•")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(.white.opacity(0.4))
+                
+                Text(statusText)
+                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                    .foregroundColor(.white.opacity(0.92))
+                    .lineLimit(1)
+            }
+        }
+        .padding(.horizontal, 22)
+        .frame(height: 44)
+    }
+    
+    private var fillGradient: LinearGradient {
+        if isAC || isCharging {
+            return LinearGradient(
+                colors: [Color.green.opacity(0.9), Color.green],
+                startPoint: .leading,
+                endPoint: .trailing
+            )
+        } else if level <= 20 {
+            return LinearGradient(
+                colors: [Color.red.opacity(0.9), Color.orange],
+                startPoint: .leading,
+                endPoint: .trailing
+            )
+        } else {
+            return LinearGradient(
+                colors: [Color.white.opacity(0.85), Color.white],
+                startPoint: .leading,
+                endPoint: .trailing
+            )
+        }
+    }
+    
+    private var statusText: String {
+        if isAC {
+            if level >= 100 {
+                return LanguageManager.tr("Fully Charged")
+            } else {
+                return LanguageManager.tr("Charging")
+            }
+        } else {
+            return LanguageManager.tr("On Battery")
+        }
+    }
+}
+
+// MARK: - Tab Picker Views
+struct TabPickerRowView: View {
+    let tab: NotchTab
+    let isSelected: Bool
+    let isPinned: Bool
+    let canPin: Bool
+    let onSelect: () -> Void
+    let onTogglePin: () -> Void
+    
+    @State private var isHovered: Bool = false
+    
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: tab.rawValue)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(isSelected ? .white : (isHovered ? .white : .gray))
+                .frame(width: 24, height: 24)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(isSelected ? Color.blue.opacity(0.35) : Color.white.opacity(0.06))
+                )
+            
+            Text(tab.displayName)
+                .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
+                .foregroundColor(isSelected ? .white : (isHovered ? .white : .white.opacity(0.85)))
+            
+            Spacer()
+            
+            Button(action: {
+                if canPin || isPinned {
+                    onTogglePin()
+                }
+            }) {
+                Image(systemName: isPinned ? "pin.fill" : "pin")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(isPinned ? Color.blue : (canPin ? (isHovered ? Color.white : Color.gray) : Color.gray.opacity(0.3)))
+                    .padding(4)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(PlainButtonStyle())
+            .disabled(!isPinned && !canPin)
+            .help(isPinned ? LanguageManager.tr("Unpin from bar") : (canPin ? LanguageManager.tr("Pin to bar") : LanguageManager.tr("Max 6 tabs reached")))
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(isSelected ? Color.white.opacity(0.12) : (isHovered ? Color.white.opacity(0.08) : Color.clear))
+        )
+        .contentShape(Rectangle())
+        .onHover { h in
+            isHovered = h
+        }
+        .onTapGesture {
+            onSelect()
+        }
+    }
+}
+
+struct TabPickerPopoverView: View {
+    @ObservedObject var viewModel: NotchViewModel
+    let pinnedTabs: [NotchTab]
+    let allTabs: [NotchTab]
+    let onTogglePin: (NotchTab) -> Void
+    let onSelectTab: (NotchTab) -> Void
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            // Header
+            HStack {
+                Text(LanguageManager.tr("Notchify Features"))
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundColor(.white)
+                
+                Spacer()
+                
+                Text("\(pinnedTabs.count)/6 " + LanguageManager.tr("Pinned (Max 6)"))
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(pinnedTabs.count >= 6 ? Color.orange : Color.white.opacity(0.6))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(
+                        Capsule()
+                            .fill(Color.white.opacity(0.1))
+                    )
+            }
+            .padding(.horizontal, 6)
+            .padding(.top, 4)
+            
+            Divider()
+                .background(Color.white.opacity(0.12))
+                .padding(.vertical, 2)
+            
+            // Tab list
+            VStack(spacing: 2) {
+                ForEach(allTabs) { tab in
+                    let isPinned = pinnedTabs.contains(tab)
+                    let isSelected = viewModel.selectedTab == tab
+                    let canPin = isPinned || pinnedTabs.count < 6
+                    
+                    TabPickerRowView(
+                        tab: tab,
+                        isSelected: isSelected,
+                        isPinned: isPinned,
+                        canPin: canPin,
+                        onSelect: {
+                            onSelectTab(tab)
+                        },
+                        onTogglePin: {
+                            onTogglePin(tab)
+                        }
+                    )
+                }
+            }
+        }
+        .padding(10)
+        .frame(width: 250)
+    }
+}
+
 // MARK: - Notch Container View
 struct ContentView: View {
     @StateObject private var viewModel = NotchViewModel()
     
-    @AppStorage("enableGlow") private var enableGlow = true
+    @AppStorage("enableGlow") private var enableGlow = false
+    @AppStorage("enableLyrics") private var enableLyrics = false
     @AppStorage("appLanguage") private var appLanguage = "en" 
 
     @AppStorage("notchOpacity") private var notchOpacity: Double = 1.0
     @AppStorage("expandTrigger") private var expandTrigger: String = "hover"
     @AppStorage("autoHideDelay") private var autoHideDelay: Double = 0.05
-    @AppStorage("tabOrderStr") private var tabOrderStr = "media,clipboard,dropzone,pomodoro,calculator,weather,system,agenda"
+    @AppStorage("tabOrderStr") private var tabOrderStr = "media,clipboard,dropzone,pomodoro,calculator,weather,system,agenda,mirror"
     @AppStorage("hiddenTabsStr") private var hiddenTabsStr = ""
+    @AppStorage("pinnedTabsStr") private var pinnedTabsStr = "music.note,doc.on.clipboard,tray.and.arrow.down.fill,timer"
+    
+    @State private var showTabPicker: Bool = false
+    @State private var isLeftChevronHovered: Bool = false
+    @State private var isRightChevronHovered: Bool = false
+    @State private var isMouseInsideNotch: Bool = false
     
     private var visibleTabs: [NotchTab] {
-        let order = tabOrderStr.split(separator: ",").compactMap { NotchTab(rawValue: String($0)) }
-        let hidden = hiddenTabsStr.split(separator: ",").compactMap { NotchTab(rawValue: String($0)) }
+        let order = tabOrderStr.split(separator: ",").compactMap { NotchTab.from(string: String($0)) }
+        let hidden = hiddenTabsStr.split(separator: ",").compactMap { NotchTab.from(string: String($0)) }
         
         var tabs = order.filter { !hidden.contains($0) }
         
@@ -1545,11 +2727,51 @@ struct ContentView: View {
         return tabs
     }
     
+    private var pinnedTabs: [NotchTab] {
+        let items = pinnedTabsStr.split(separator: ",").compactMap { NotchTab.from(string: String($0)) }
+        let available = items.filter { visibleTabs.contains($0) }
+        if available.isEmpty {
+            return [.media, .clipboard, .dropzone, .pomodoro].filter { visibleTabs.contains($0) }
+        }
+        return Array(available.prefix(6))
+    }
+    
+    private func togglePin(_ tab: NotchTab) {
+        var current = pinnedTabs
+        if let idx = current.firstIndex(of: tab) {
+            current.remove(at: idx)
+        } else {
+            guard current.count < 6 else { return }
+            current.append(tab)
+        }
+        pinnedTabsStr = current.map { $0.rawValue }.joined(separator: ",")
+    }
+    
+    private func navigateToNextTab() {
+        let tabs = visibleTabs.isEmpty ? NotchTab.allCases : visibleTabs
+        guard let idx = tabs.firstIndex(of: viewModel.selectedTab) else {
+            if let first = tabs.first { viewModel.selectedTab = first }
+            return
+        }
+        let nextIdx = (idx + 1) % tabs.count
+        viewModel.selectedTab = tabs[nextIdx]
+    }
+    
+    private func navigateToPrevTab() {
+        let tabs = visibleTabs.isEmpty ? NotchTab.allCases : visibleTabs
+        guard let idx = tabs.firstIndex(of: viewModel.selectedTab) else {
+            if let last = tabs.last { viewModel.selectedTab = last }
+            return
+        }
+        let prevIdx = (idx - 1 + tabs.count) % tabs.count
+        viewModel.selectedTab = tabs[prevIdx]
+    }
+    
     private let clockWidth: CGFloat = 130
     private let mediaWidth: CGFloat = 220
     private let compactHeight: CGFloat = 34
-    private let expandedWidth: CGFloat = 400
-    private let expandedHeight: CGFloat = 160
+    private let expandedWidth: CGFloat = 420
+    private let expandedHeight: CGFloat = 175
     
     @State private var previousApp: NSRunningApplication?
     @State private var blossomHeight: CGFloat = 0
@@ -1557,6 +2779,7 @@ struct ContentView: View {
     
     private var currentWidth: CGFloat {
         if viewModel.isExpanded { return expandedWidth }
+        if viewModel.showBatteryHUD { return 250 }
         if viewModel.showClipboardHUD { return 220 }
         if viewModel.showTimesUp { return 260 }
         if viewModel.showDeviceHUD { return 260 }
@@ -1567,13 +2790,20 @@ struct ContentView: View {
 
     private var currentHeight: CGFloat {
         if viewModel.isExpanded {
-            if viewModel.selectedTab == .calculator { return 230 }
-            if viewModel.selectedTab == .media && !viewModel.lyrics.isEmpty { return 280 }
-            if viewModel.selectedTab == .weather { return 180 }
-            if viewModel.selectedTab == .system { return 180 }
-            if viewModel.selectedTab == .agenda { return 330 }
+            if viewModel.selectedTab == .calculator { return 265 }
+            if viewModel.selectedTab == .media && !viewModel.lyrics.isEmpty && enableLyrics { return 280 }
+            if viewModel.selectedTab == .weather { return 155 }
+            if viewModel.selectedTab == .system { return 205 }
+            if viewModel.selectedTab == .agenda { return viewModel.isPinningExpansion ? 320 : 265 }
+            if viewModel.selectedTab == .pomodoro { return 175 }
+            if viewModel.selectedTab == .dropzone { return viewModel.stagedFiles.isEmpty ? 175 : 185 }
+            if viewModel.selectedTab == .clipboard { return viewModel.clipboardItems.isEmpty ? 175 : 225 }
+            if viewModel.selectedTab == .mirror { return 340 }
+            if viewModel.selectedTab == .notes { return 260 }
+            if viewModel.selectedTab == .network { return 220 }
             return expandedHeight
         }
+        if viewModel.showBatteryHUD { return 44 }
         if viewModel.showClipboardHUD { return 44 }
         if viewModel.showTimesUp { return 64 }
         if viewModel.showDeviceHUD { return 44 }
@@ -1584,7 +2814,7 @@ struct ContentView: View {
     }
     
     private var isBlossoming: Bool {
-        viewModel.showClipboardHUD || viewModel.showTimesUp || viewModel.showDeviceHUD || viewModel.showVolumeHUD || viewModel.showAgendaHUD || viewModel.isHoveringWithFile
+        viewModel.showBatteryHUD || viewModel.showClipboardHUD || viewModel.showTimesUp || viewModel.showDeviceHUD || viewModel.showVolumeHUD || viewModel.showAgendaHUD || viewModel.isHoveringWithFile
     }
     
     var body: some View {
@@ -1619,8 +2849,9 @@ struct ContentView: View {
                     if viewModel.isExpanded {
                         VStack(spacing: 0) {
                             // Tab Selector
-                            HStack(spacing: 16) {
-                                ForEach(visibleTabs, id: \.self) { tab in
+                            HStack(spacing: 12) {
+                                // 1. Pinned Tabs
+                                ForEach(pinnedTabs, id: \.self) { tab in
                                     Button(action: {
                                         withAnimation(.easeInOut(duration: 0.2)) {
                                             viewModel.selectedTab = tab
@@ -1632,47 +2863,207 @@ struct ContentView: View {
                                             .frame(width: 24, height: 24)
                                     }
                                     .buttonStyle(PlainButtonStyle())
+                                    .help(tab.displayName)
+                                    .contextMenu {
+                                        Button(action: { togglePin(tab) }) {
+                                            Label(LanguageManager.tr("Unpin from bar"), systemImage: "pin.slash")
+                                        }
+                                    }
                                 }
+                                
+                                // 2. Temporary Active Tab (if current tab is not pinned)
+                                if !pinnedTabs.contains(viewModel.selectedTab) {
+                                    Rectangle()
+                                        .fill(Color.white.opacity(0.18))
+                                        .frame(width: 1, height: 14)
+                                        .padding(.horizontal, 2)
+                                        .transition(.opacity)
+                                    
+                                    Button(action: {
+                                        // Already active tab
+                                    }) {
+                                        Image(systemName: viewModel.selectedTab.rawValue)
+                                            .font(.system(size: 15, weight: .bold))
+                                            .foregroundColor(.white)
+                                            .frame(width: 24, height: 24)
+                                    }
+                                    .buttonStyle(PlainButtonStyle())
+                                    .help(viewModel.selectedTab.displayName)
+                                    .contextMenu {
+                                        Button(action: { togglePin(viewModel.selectedTab) }) {
+                                            Label(LanguageManager.tr("Pin to bar"), systemImage: "pin")
+                                        }
+                                    }
+                                    .transition(.scale.combined(with: .opacity))
+                                }
+                                
+                                // 3. Feature Picker Button (+)
+                                Button(action: {
+                                    showTabPicker.toggle()
+                                }) {
+                                    Image(systemName: "plus")
+                                        .font(.system(size: 11, weight: .bold))
+                                        .foregroundColor(showTabPicker ? .white : Color.white.opacity(0.5))
+                                        .frame(width: 22, height: 22)
+                                        .background(
+                                            Circle()
+                                                .fill(showTabPicker ? Color.white.opacity(0.2) : Color.white.opacity(0.06))
+                                        )
+                                }
+                                .buttonStyle(PlainButtonStyle())
+                                .help(LanguageManager.tr("All Features & Pinning"))
+                                .popover(isPresented: $showTabPicker, arrowEdge: .bottom) {
+                                    TabPickerPopoverView(
+                                        viewModel: viewModel,
+                                        pinnedTabs: pinnedTabs,
+                                        allTabs: visibleTabs.isEmpty ? NotchTab.allCases : visibleTabs,
+                                        onTogglePin: { tab in
+                                            togglePin(tab)
+                                        },
+                                        onSelectTab: { tab in
+                                            withAnimation(.easeInOut(duration: 0.2)) {
+                                                viewModel.selectedTab = tab
+                                            }
+                                            showTabPicker = false
+                                        }
+                                    )
+                                }
+                                
                                 Spacer()
                             }
-                            .padding(.horizontal, 24)
+                            .padding(.horizontal, 30)
                             .padding(.top, 12)
+                            .padding(.bottom, 6)
                             
-                            // Tab Content
+                            // Subtle Tab Divider
+                            Rectangle()
+                                .fill(Color.white.opacity(0.08))
+                                .frame(height: 0.5)
+                                .padding(.horizontal, 30)
+                            
+                            // Tab Content with Floating Chevrons
                             ZStack(alignment: .top) {
-                                if viewModel.selectedTab == .media {
-                                    MediaCardView(viewModel: viewModel)
-                                        .transition(.scale(scale: 0.85).combined(with: .opacity))
-                                } else if viewModel.selectedTab == .clipboard {
-                                    ClipboardStackView(viewModel: viewModel)
-                                        .transition(.scale(scale: 0.85).combined(with: .opacity))
-                                } else if viewModel.selectedTab == .dropzone {
-                                    DropZoneCardView(viewModel: viewModel)
-                                        .transition(.scale(scale: 0.85).combined(with: .opacity))
-                                } else if viewModel.selectedTab == .pomodoro {
-                                    PomodoroTimerView(viewModel: viewModel)
-                                        .transition(.scale(scale: 0.85).combined(with: .opacity))
-                                } else if viewModel.selectedTab == .calculator {
-                                    CalculatorView(viewModel: viewModel)
-                                        .transition(.scale(scale: 0.85).combined(with: .opacity))
-                                } else if viewModel.selectedTab == .weather {
-                                    WeatherCardView(viewModel: viewModel)
-                                        .transition(.scale(scale: 0.85).combined(with: .opacity))
-                                } else if viewModel.selectedTab == .system {
-                                    SystemMonitorView(viewModel: viewModel)
-                                        .transition(.scale(scale: 0.85).combined(with: .opacity))
-                                } else if viewModel.selectedTab == .agenda {
-                                    AgendaCardView(viewModel: viewModel)
-                                        .transition(.scale(scale: 0.85).combined(with: .opacity))
+                                ZStack(alignment: .top) {
+                                    if viewModel.selectedTab == .media {
+                                        MediaCardView(viewModel: viewModel)
+                                            .transition(.scale(scale: 0.85, anchor: .top).combined(with: .opacity))
+                                    } else if viewModel.selectedTab == .clipboard {
+                                        ClipboardStackView(viewModel: viewModel)
+                                            .transition(.scale(scale: 0.85, anchor: .top).combined(with: .opacity))
+                                    } else if viewModel.selectedTab == .dropzone {
+                                        DropZoneCardView(viewModel: viewModel)
+                                            .transition(.scale(scale: 0.85, anchor: .top).combined(with: .opacity))
+                                    } else if viewModel.selectedTab == .pomodoro {
+                                        PomodoroTimerView(viewModel: viewModel)
+                                            .transition(.scale(scale: 0.85, anchor: .top).combined(with: .opacity))
+                                    } else if viewModel.selectedTab == .calculator {
+                                        CalculatorView(viewModel: viewModel)
+                                            .transition(.scale(scale: 0.85, anchor: .top).combined(with: .opacity))
+                                    } else if viewModel.selectedTab == .weather {
+                                        WeatherCardView(viewModel: viewModel)
+                                            .transition(.scale(scale: 0.85, anchor: .top).combined(with: .opacity))
+                                    } else if viewModel.selectedTab == .system {
+                                        SystemMonitorView(viewModel: viewModel)
+                                            .transition(.scale(scale: 0.85, anchor: .top).combined(with: .opacity))
+                                    } else if viewModel.selectedTab == .agenda {
+                                        AgendaCardView(viewModel: viewModel)
+                                            .transition(.scale(scale: 0.85, anchor: .top).combined(with: .opacity))
+                                    } else if viewModel.selectedTab == .mirror {
+                                        MirrorCardView(viewModel: viewModel)
+                                            .transition(.scale(scale: 0.85, anchor: .top).combined(with: .opacity))
+                                    } else if viewModel.selectedTab == .notes {
+                                        NotesCardView(viewModel: viewModel)
+                                            .transition(.scale(scale: 0.85, anchor: .top).combined(with: .opacity))
+                                    } else if viewModel.selectedTab == .network {
+                                        NetworkCardView(viewModel: viewModel)
+                                            .transition(.scale(scale: 0.85, anchor: .top).combined(with: .opacity))
+                                    }
                                 }
+                                .padding(.horizontal, 42)
+                                
+                                // Floating Chevron Overlays (Cleanly inset inside Notch body, anchored vertically & consistently visible)
+                                HStack {
+                                    Button(action: {
+                                        withAnimation(.easeInOut(duration: 0.25)) {
+                                            navigateToPrevTab()
+                                        }
+                                    }) {
+                                        Image(systemName: "chevron.left")
+                                            .font(.system(size: 9, weight: .bold))
+                                            .foregroundColor(.white)
+                                            .frame(width: 20, height: 20)
+                                            .background(
+                                                Circle()
+                                                    .fill(isLeftChevronHovered ? Color.white.opacity(0.25) : Color.white.opacity(0.12))
+                                                    .overlay(Circle().stroke(Color.white.opacity(isLeftChevronHovered ? 0.4 : 0.2), lineWidth: 0.5))
+                                            )
+                                            .scaleEffect(isLeftChevronHovered ? 1.08 : 1.0)
+                                    }
+                                    .buttonStyle(PlainButtonStyle())
+                                    .help(LanguageManager.tr("Previous Tab"))
+                                    .opacity(isLeftChevronHovered ? 1.0 : 0.75)
+                                    .onHover { h in
+                                        withAnimation(.easeInOut(duration: 0.15)) {
+                                            isLeftChevronHovered = h
+                                        }
+                                    }
+                                    .padding(.leading, 18)
+                                    
+                                    Spacer()
+                                    
+                                    Button(action: {
+                                        withAnimation(.easeInOut(duration: 0.25)) {
+                                            navigateToNextTab()
+                                        }
+                                    }) {
+                                        Image(systemName: "chevron.right")
+                                            .font(.system(size: 9, weight: .bold))
+                                            .foregroundColor(.white)
+                                            .frame(width: 20, height: 20)
+                                            .background(
+                                                Circle()
+                                                    .fill(isRightChevronHovered ? Color.white.opacity(0.25) : Color.white.opacity(0.12))
+                                                    .overlay(Circle().stroke(Color.white.opacity(isRightChevronHovered ? 0.4 : 0.2), lineWidth: 0.5))
+                                            )
+                                            .scaleEffect(isRightChevronHovered ? 1.08 : 1.0)
+                                    }
+                                    .buttonStyle(PlainButtonStyle())
+                                    .help(LanguageManager.tr("Next Tab"))
+                                    .opacity(isRightChevronHovered ? 1.0 : 0.75)
+                                    .onHover { h in
+                                        withAnimation(.easeInOut(duration: 0.15)) {
+                                            isRightChevronHovered = h
+                                        }
+                                    }
+                                    .padding(.trailing, 18)
+                                }
+                                .padding(.top, 45)
                             }
                         }
-                        .padding(.horizontal, 8)
                         .transition(.scale(scale: 0.01, anchor: .top))
+                        .simultaneousGesture(
+                            DragGesture(minimumDistance: 25)
+                                .onEnded { value in
+                                    if abs(value.translation.width) > abs(value.translation.height) * 1.5 {
+                                        if value.translation.width < -30 {
+                                            withAnimation(.easeInOut(duration: 0.25)) {
+                                                navigateToNextTab()
+                                            }
+                                        } else if value.translation.width > 30 {
+                                            withAnimation(.easeInOut(duration: 0.25)) {
+                                                navigateToPrevTab()
+                                            }
+                                        }
+                                    }
+                                }
+                        )
                     } else {
                         Group {
                             if viewModel.isHoveringWithFile {
                                 DropFileBlossomView()
+                                    .transition(.opacity.combined(with: .scale(scale: 0.8)))
+                            } else if viewModel.showBatteryHUD {
+                                BatteryBlossomView(level: viewModel.batteryLevel, isCharging: viewModel.isBatteryCharging, isAC: viewModel.isACConnected)
                                     .transition(.opacity.combined(with: .scale(scale: 0.8)))
                             } else if viewModel.showVolumeHUD {
                                 VolumeBlossomView(volume: viewModel.currentVolume)
@@ -1705,6 +3096,7 @@ struct ContentView: View {
             .background(
                 ZStack {
                     HoverTrackingView { isHovering in
+                        isMouseInsideNotch = isHovering
                         if isHovering {
                             if expandTrigger == "hover" {
                                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
@@ -1723,6 +3115,7 @@ struct ContentView: View {
                             DispatchQueue.main.asyncAfter(deadline: .now() + autoHideDelay) {
                                 guard !viewModel.isHoveringWithFile else { return }
                                 guard !viewModel.isPinningExpansion else { return }
+                                guard !showTabPicker else { return }
                                 withAnimation(.spring(response: 0.38, dampingFraction: 0.72)) {
                                     viewModel.isExpanded = false
                                 }
@@ -1762,12 +3155,13 @@ struct ContentView: View {
                     )
                 }
             )
-            .frame(width: currentWidth, height: currentHeight)
+            .frame(width: currentWidth, height: currentHeight, alignment: .top)
             .animation(.interactiveSpring(response: 0.5, dampingFraction: 0.6, blendDuration: 0), value: viewModel.isExpanded)
             .animation(.interactiveSpring(response: 0.5, dampingFraction: 0.55, blendDuration: 0), value: viewModel.showClock)
             .animation(.interactiveSpring(response: 0.5, dampingFraction: 0.55, blendDuration: 0), value: viewModel.isHoveringWithFile)
             .animation(.interactiveSpring(response: 0.5, dampingFraction: 0.55, blendDuration: 0), value: viewModel.showTimesUp)
             .animation(.interactiveSpring(response: 0.5, dampingFraction: 0.55, blendDuration: 0), value: viewModel.showVolumeHUD)
+            .animation(.interactiveSpring(response: 0.5, dampingFraction: 0.55, blendDuration: 0), value: viewModel.showBatteryHUD)
             .animation(.interactiveSpring(response: 0.5, dampingFraction: 0.55, blendDuration: 0), value: viewModel.showDeviceHUD)
             .animation(.interactiveSpring(response: 0.5, dampingFraction: 0.55, blendDuration: 0), value: viewModel.showClipboardHUD)
             .animation(.interactiveSpring(response: 0.5, dampingFraction: 0.55, blendDuration: 0), value: viewModel.showAgendaHUD)
@@ -1820,6 +3214,44 @@ struct ContentView: View {
                 if hovering {
                     withAnimation(.spring(response: 0.38, dampingFraction: 0.72)) {
                         viewModel.isExpanded = false
+                    }
+                }
+            }
+            .onChange(of: enableLyrics) { enabled in
+                if enabled {
+                    if !viewModel.currentSong.isEmpty {
+                        LyricsManager.shared.fetchLyrics(for: viewModel.currentSong, artist: viewModel.currentArtist) { newLyrics in
+                            viewModel.lyrics = newLyrics
+                        }
+                    }
+                } else {
+                    viewModel.lyrics = []
+                }
+            }
+            .onChange(of: viewModel.selectedTab) { newTab in
+                if newTab != .mirror {
+                    CameraMirrorManager.shared.stopSession()
+                }
+            }
+            .onChange(of: viewModel.isExpanded) { isExpanded in
+                if !isExpanded {
+                    showTabPicker = false
+                    CameraMirrorManager.shared.stopSession()
+                }
+            }
+            .onChange(of: showTabPicker) { isOpen in
+                if !isOpen {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + max(autoHideDelay, 0.2)) {
+                        guard !showTabPicker else { return }
+                        guard !isMouseInsideNotch else { return }
+                        guard !viewModel.isHoveringWithFile else { return }
+                        guard !viewModel.isPinningExpansion else { return }
+                        if expandTrigger == "hover" {
+                            withAnimation(.spring(response: 0.38, dampingFraction: 0.72)) {
+                                viewModel.isExpanded = false
+                            }
+                            previousApp?.activate(options: .activateIgnoringOtherApps)
+                        }
                     }
                 }
             }
@@ -1905,6 +3337,11 @@ class MediaRemoteHelper {
     
     private var lastQuery: String = ""
     private var cachedArtwork: NSImage? = nil
+    private var spotifyCachedUrl: String = ""
+    private var spotifyCachedArtwork: NSImage? = nil
+    
+    private(set) var activePlayerBundleId: String? = nil
+    private(set) var activePlayerName: String? = nil
     
     typealias MRMediaRemoteGetNowPlayingInfoFunction = @convention(c) (DispatchQueue, @escaping @convention(block) ([String: Any]) -> Void) -> Void
     typealias MRMediaRemoteSendCommandFunction = @convention(c) (UInt32, Any?) -> Bool
@@ -1925,25 +3362,207 @@ class MediaRemoteHelper {
         }
     }
     
+    // MARK: - App Running & AppleScript Helpers
+    private func isAppRunning(_ bundleId: String) -> Bool {
+        return NSWorkspace.shared.runningApplications.contains(where: { $0.bundleIdentifier == bundleId })
+    }
+    
+    @discardableResult
+    private func runAppleScript(_ source: String) -> String? {
+        var error: NSDictionary?
+        if let scriptObject = NSAppleScript(source: source) {
+            let output = scriptObject.executeAndReturnError(&error)
+            if error == nil {
+                return output.stringValue
+            }
+        }
+        return nil
+    }
+    
+    // MARK: - Playback Controls
     func togglePlayPause() {
-        _ = sendCommand?(2, nil) // togglePlayPause
+        if activePlayerBundleId == "com.spotify.client" && isAppRunning("com.spotify.client") {
+            DispatchQueue.global(qos: .userInitiated).async {
+                self.runAppleScript("tell application \"Spotify\" to playpause")
+            }
+        } else if activePlayerBundleId == "com.apple.Music" && isAppRunning("com.apple.Music") {
+            DispatchQueue.global(qos: .userInitiated).async {
+                self.runAppleScript("tell application \"Music\" to playpause")
+            }
+        } else {
+            _ = sendCommand?(2, nil) // MediaRemote togglePlayPause
+        }
     }
     
     func nextTrack() {
-        _ = sendCommand?(4, nil) // nextTrack
+        if activePlayerBundleId == "com.spotify.client" && isAppRunning("com.spotify.client") {
+            DispatchQueue.global(qos: .userInitiated).async {
+                self.runAppleScript("tell application \"Spotify\" to next track")
+            }
+        } else if activePlayerBundleId == "com.apple.Music" && isAppRunning("com.apple.Music") {
+            DispatchQueue.global(qos: .userInitiated).async {
+                self.runAppleScript("tell application \"Music\" to next track")
+            }
+        } else {
+            _ = sendCommand?(4, nil) // MediaRemote nextTrack
+        }
     }
     
     func previousTrack() {
-        _ = sendCommand?(5, nil) // previousTrack
+        if activePlayerBundleId == "com.spotify.client" && isAppRunning("com.spotify.client") {
+            DispatchQueue.global(qos: .userInitiated).async {
+                self.runAppleScript("tell application \"Spotify\" to previous track")
+            }
+        } else if activePlayerBundleId == "com.apple.Music" && isAppRunning("com.apple.Music") {
+            DispatchQueue.global(qos: .userInitiated).async {
+                self.runAppleScript("tell application \"Music\" to previous track")
+            }
+        } else {
+            _ = sendCommand?(5, nil) // MediaRemote previousTrack
+        }
     }
     
     func seek(to time: Double) {
-        setElapsedTime?(time)
+        if activePlayerBundleId == "com.spotify.client" && isAppRunning("com.spotify.client") {
+            DispatchQueue.global(qos: .userInitiated).async {
+                self.runAppleScript("tell application \"Spotify\" to set player position to \(time)")
+            }
+        } else if activePlayerBundleId == "com.apple.Music" && isAppRunning("com.apple.Music") {
+            DispatchQueue.global(qos: .userInitiated).async {
+                self.runAppleScript("tell application \"Music\" to set player position to \(time)")
+            }
+        } else {
+            setElapsedTime?(time)
+        }
     }
     
-    func fetchNowPlaying(completion: @escaping (String?, String?, NSImage?, Bool, Double, Double) -> Void) {
-        guard let getNowPlayingInfo = getNowPlayingInfo else {
+    func activatePlayerApp() {
+        if let bundleId = activePlayerBundleId {
+            if let app = NSWorkspace.shared.runningApplications.first(where: { $0.bundleIdentifier == bundleId }) {
+                app.activate(options: [.activateIgnoringOtherApps])
+                return
+            } else if let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) {
+                NSWorkspace.shared.openApplication(at: appURL, configuration: NSWorkspace.OpenConfiguration())
+                return
+            }
+        }
+        
+        // Fallbacks if bundleId was not determined
+        if isAppRunning("com.spotify.client") {
+            DispatchQueue.global(qos: .userInitiated).async {
+                self.runAppleScript("tell application \"Spotify\" to activate")
+            }
+        } else if isAppRunning("com.apple.Music") {
+            DispatchQueue.global(qos: .userInitiated).async {
+                self.runAppleScript("tell application \"Music\" to activate")
+            }
+        }
+    }
+    
+    // MARK: - Query Players
+    private func querySpotify(completion: @escaping (_ title: String?, _ artist: String?, _ album: String?, _ isPlaying: Bool, _ duration: Double, _ elapsed: Double, _ artworkUrl: String?) -> Void) {
+        guard isAppRunning("com.spotify.client") else {
+            completion(nil, nil, nil, false, 0, 0, nil)
+            return
+        }
+        
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            let script = """
+            tell application "Spotify"
+                try
+                    set pState to (player state as string)
+                    if pState is "playing" or pState is "paused" then
+                        set tName to (name of current track)
+                        set tArtist to (artist of current track)
+                        set tAlbum to (album of current track)
+                        set tDur to ((duration of current track) / 1000)
+                        set tPos to (player position)
+                        set tArt to ""
+                        try
+                            set tArt to (artwork url of current track)
+                        end try
+                        return pState & "|||" & tName & "|||" & tArtist & "|||" & tAlbum & "|||" & tDur & "|||" & tPos & "|||" & tArt
+                    else
+                        return "stopped"
+                    end if
+                on error
+                    return "stopped"
+                end try
+            end tell
+            """
+            guard let result = self.runAppleScript(script), result != "stopped" else {
+                completion(nil, nil, nil, false, 0, 0, nil)
+                return
+            }
+            
+            let parts = result.components(separatedBy: "|||")
+            if parts.count >= 6 {
+                let isPlaying = parts[0] == "playing"
+                let title = parts[1]
+                let artist = parts[2]
+                let album = parts[3]
+                let duration = Double(parts[4]) ?? 0.0
+                let elapsed = Double(parts[5]) ?? 0.0
+                let artworkUrl = parts.count > 6 ? parts[6] : nil
+                completion(title, artist, album, isPlaying, duration, elapsed, artworkUrl)
+            } else {
+                completion(nil, nil, nil, false, 0, 0, nil)
+            }
+        }
+    }
+    
+    private func queryAppleMusic(completion: @escaping (_ title: String?, _ artist: String?, _ album: String?, _ isPlaying: Bool, _ duration: Double, _ elapsed: Double) -> Void) {
+        guard isAppRunning("com.apple.Music") else {
             completion(nil, nil, nil, false, 0, 0)
+            return
+        }
+        
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            let script = """
+            tell application "Music"
+                try
+                    set pState to (player state as string)
+                    if pState is "playing" or pState is "paused" then
+                        set tName to (name of current track)
+                        set tArtist to (artist of current track)
+                        set tAlbum to (album of current track)
+                        set tDur to (duration of current track)
+                        set tPos to (player position)
+                        return pState & "|||" & tName & "|||" & tArtist & "|||" & tAlbum & "|||" & tDur & "|||" & tPos
+                    else
+                        return "stopped"
+                    end if
+                on error
+                    return "stopped"
+                end try
+            end tell
+            """
+            guard let result = self.runAppleScript(script), result != "stopped" else {
+                completion(nil, nil, nil, false, 0, 0)
+                return
+            }
+            
+            let parts = result.components(separatedBy: "|||")
+            if parts.count >= 6 {
+                let isPlaying = parts[0] == "playing"
+                let title = parts[1]
+                let artist = parts[2]
+                let album = parts[3]
+                let duration = Double(parts[4]) ?? 0.0
+                let elapsed = Double(parts[5]) ?? 0.0
+                completion(title, artist, album, isPlaying, duration, elapsed)
+            } else {
+                completion(nil, nil, nil, false, 0, 0)
+            }
+        }
+    }
+    
+    // MARK: - Native MediaRemote Detector
+    private func fetchMediaRemote(completion: @escaping (_ title: String?, _ artist: String?, _ artwork: NSImage?, _ isPlaying: Bool, _ duration: Double, _ elapsed: Double, _ bundleId: String?, _ appName: String?) -> Void) {
+        guard let getNowPlayingInfo = getNowPlayingInfo else {
+            completion(nil, nil, nil, false, 0, 0, nil, nil)
             return
         }
         
@@ -1974,40 +3593,56 @@ class MediaRemoteHelper {
                 artistStr = album
             }
             
+            var detectedBundleId: String? = nil
+            var detectedAppName: String? = nil
+            
+            if let directBundleId = info["kMRMediaRemoteNowPlayingInfoClientBundleIdentifier"] as? String, !directBundleId.isEmpty {
+                detectedBundleId = directBundleId
+            } else if let clientData = info["kMRMediaRemoteNowPlayingInfoClientPropertiesData"] as? Data {
+                let printable = String(clientData.compactMap { byte -> Character? in
+                    return (byte >= 32 && byte <= 126) ? Character(UnicodeScalar(byte)) : nil
+                })
+                if let regex = try? NSRegularExpression(pattern: "[a-zA-Z0-9-]+\\.[a-zA-Z0-9-]+\\.[a-zA-Z0-9-]+"),
+                   let match = regex.firstMatch(in: printable, range: NSRange(printable.startIndex..., in: printable)) {
+                    detectedBundleId = String(printable[Range(match.range, in: printable)!])
+                }
+            }
+            
+            if let bId = detectedBundleId {
+                if let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bId) {
+                    detectedAppName = FileManager.default.displayName(atPath: appURL.path)
+                }
+            }
+            
+            if title.isEmpty && artistStr.isEmpty {
+                DispatchQueue.main.async {
+                    completion(nil, nil, nil, false, 0, 0, nil, nil)
+                }
+                return
+            }
+            
+            self.activePlayerBundleId = detectedBundleId
+            self.activePlayerName = detectedAppName ?? "Media Player"
+            
             if let artworkData = info["kMRMediaRemoteNowPlayingInfoArtworkData"] as? Data, artworkData.count > 0 {
                 let img = NSImage(data: artworkData)
                 self.cachedArtwork = img
-                self.lastQuery = "" // Reset to prevent unnecessary iTunes fetch
+                self.lastQuery = ""
                 DispatchQueue.main.async {
-                    completion(title.isEmpty ? nil : title, artistStr.isEmpty ? nil : artistStr, img, isPlaying, duration, elapsed)
+                    completion(title.isEmpty ? nil : title, artistStr.isEmpty ? nil : artistStr, img, isPlaying, duration, elapsed, detectedBundleId, detectedAppName)
                 }
             } else {
-                // Artwork is missing, use iTunes Search API as fallback
                 let query = "\(title) \(artist)"
-                
                 if query == self.lastQuery && !query.trimmingCharacters(in: .whitespaces).isEmpty {
-                    // We already fetched or are fetching this track
                     DispatchQueue.main.async {
-                        completion(title.isEmpty ? nil : title, artistStr.isEmpty ? nil : artistStr, self.cachedArtwork, isPlaying, duration, elapsed)
+                        completion(title.isEmpty ? nil : title, artistStr.isEmpty ? nil : artistStr, self.cachedArtwork, isPlaying, duration, elapsed, detectedBundleId, detectedAppName)
                     }
                 } else {
                     self.lastQuery = query
-                    
-                    // Fallback to app icon initially while we fetch
                     var fallbackIcon: NSImage? = nil
-                    if let clientData = info["kMRMediaRemoteNowPlayingInfoClientPropertiesData"] as? Data {
-                        let printable = String(clientData.compactMap { byte -> Character? in
-                            return (byte >= 32 && byte <= 126) ? Character(UnicodeScalar(byte)) : nil
-                        })
-                        if let regex = try? NSRegularExpression(pattern: "[a-zA-Z0-9-]+\\.[a-zA-Z0-9-]+\\.[a-zA-Z0-9-]+"),
-                           let match = regex.firstMatch(in: printable, range: NSRange(printable.startIndex..., in: printable)) {
-                            let bundleId = String(printable[Range(match.range, in: printable)!])
-                            if let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) {
-                                fallbackIcon = NSWorkspace.shared.icon(forFile: appURL.path)
-                            }
-                        }
+                    if let bId = detectedBundleId, let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bId) {
+                        fallbackIcon = NSWorkspace.shared.icon(forFile: appURL.path)
                     }
-                    
                     self.cachedArtwork = fallbackIcon
                     
                     if !query.trimmingCharacters(in: .whitespaces).isEmpty {
@@ -2015,16 +3650,226 @@ class MediaRemoteHelper {
                             if let fetchedImage = fetchedImage {
                                 self.cachedArtwork = fetchedImage
                                 DispatchQueue.main.async {
-                                    completion(title.isEmpty ? nil : title, artistStr.isEmpty ? nil : artistStr, fetchedImage, isPlaying, duration, elapsed)
+                                    completion(title.isEmpty ? nil : title, artistStr.isEmpty ? nil : artistStr, fetchedImage, isPlaying, duration, elapsed, detectedBundleId, detectedAppName)
                                 }
                             }
                         }
                     }
                     
                     DispatchQueue.main.async {
-                        completion(title.isEmpty ? nil : title, artistStr.isEmpty ? nil : artistStr, self.cachedArtwork, isPlaying, duration, elapsed)
+                        completion(title.isEmpty ? nil : title, artistStr.isEmpty ? nil : artistStr, self.cachedArtwork, isPlaying, duration, elapsed, detectedBundleId, detectedAppName)
                     }
                 }
+            }
+        }
+    }
+    
+    // MARK: - Master Fetch Now Playing
+    func fetchNowPlaying(completion: @escaping (String?, String?, NSImage?, Bool, Double, Double, String?, String?) -> Void) {
+        let preference = UserDefaults.standard.string(forKey: "preferredMusicPlayer") ?? "auto"
+        
+        switch preference {
+        case "spotify":
+            querySpotify { [weak self] title, artist, album, isPlaying, duration, elapsed, artworkUrl in
+                guard let self = self else { return }
+                if let title = title, !title.isEmpty {
+                    self.activePlayerBundleId = "com.spotify.client"
+                    self.activePlayerName = "Spotify"
+                    self.handleSpotifyResult(title: title, artist: artist, album: album, isPlaying: isPlaying, duration: duration, elapsed: elapsed, artworkUrl: artworkUrl, completion: completion)
+                } else {
+                    self.fetchMediaRemote(completion: completion)
+                }
+            }
+            
+        case "music":
+            queryAppleMusic { [weak self] title, artist, album, isPlaying, duration, elapsed in
+                guard let self = self else { return }
+                if let title = title, !title.isEmpty {
+                    self.activePlayerBundleId = "com.apple.Music"
+                    self.activePlayerName = "Music"
+                    self.handleAppleMusicResult(title: title, artist: artist, album: album, isPlaying: isPlaying, duration: duration, elapsed: elapsed, completion: completion)
+                } else {
+                    self.fetchMediaRemote(completion: completion)
+                }
+            }
+            
+        case "browser":
+            self.fetchMediaRemote(completion: completion)
+            
+        default: // "auto"
+            if isAppRunning("com.spotify.client") {
+                querySpotify { [weak self] title, artist, album, isPlaying, duration, elapsed, artworkUrl in
+                    guard let self = self else { return }
+                    if isPlaying, let title = title, !title.isEmpty {
+                        self.activePlayerBundleId = "com.spotify.client"
+                        self.activePlayerName = "Spotify"
+                        self.handleSpotifyResult(title: title, artist: artist, album: album, isPlaying: isPlaying, duration: duration, elapsed: elapsed, artworkUrl: artworkUrl, completion: completion)
+                        return
+                    }
+                    
+                    self.checkAppleMusicOrFallback(spotifyPaused: (title, artist, album, isPlaying, duration, elapsed, artworkUrl), completion: completion)
+                }
+            } else {
+                checkAppleMusicOrFallback(spotifyPaused: nil, completion: completion)
+            }
+        }
+    }
+    
+    private func checkAppleMusicOrFallback(spotifyPaused: (title: String?, artist: String?, album: String?, isPlaying: Bool, duration: Double, elapsed: Double, artworkUrl: String?)?, completion: @escaping (String?, String?, NSImage?, Bool, Double, Double, String?, String?) -> Void) {
+        if isAppRunning("com.apple.Music") {
+            queryAppleMusic { [weak self] title, artist, album, isPlaying, duration, elapsed in
+                guard let self = self else { return }
+                if isPlaying, let title = title, !title.isEmpty {
+                    self.activePlayerBundleId = "com.apple.Music"
+                    self.activePlayerName = "Music"
+                    self.handleAppleMusicResult(title: title, artist: artist, album: album, isPlaying: isPlaying, duration: duration, elapsed: elapsed, completion: completion)
+                    return
+                }
+                
+                self.fetchMediaRemote { mrTitle, mrArtist, mrArt, mrPlaying, mrDuration, mrElapsed, mrBundle, mrName in
+                    if mrPlaying && mrTitle != nil {
+                        completion(mrTitle, mrArtist, mrArt, mrPlaying, mrDuration, mrElapsed, mrBundle, mrName)
+                    } else if let sp = spotifyPaused, let spTitle = sp.title, !spTitle.isEmpty {
+                        self.activePlayerBundleId = "com.spotify.client"
+                        self.activePlayerName = "Spotify"
+                        self.handleSpotifyResult(title: spTitle, artist: sp.artist, album: sp.album, isPlaying: sp.isPlaying, duration: sp.duration, elapsed: sp.elapsed, artworkUrl: sp.artworkUrl, completion: completion)
+                    } else if let amTitle = title, !amTitle.isEmpty {
+                        self.activePlayerBundleId = "com.apple.Music"
+                        self.activePlayerName = "Music"
+                        self.handleAppleMusicResult(title: amTitle, artist: artist, album: album, isPlaying: isPlaying, duration: duration, elapsed: elapsed, completion: completion)
+                    } else {
+                        completion(mrTitle, mrArtist, mrArt, mrPlaying, mrDuration, mrElapsed, mrBundle, mrName)
+                    }
+                }
+            }
+        } else {
+            fetchMediaRemote { [weak self] mrTitle, mrArtist, mrArt, mrPlaying, mrDuration, mrElapsed, mrBundle, mrName in
+                guard let self = self else { return }
+                if mrPlaying && mrTitle != nil {
+                    completion(mrTitle, mrArtist, mrArt, mrPlaying, mrDuration, mrElapsed, mrBundle, mrName)
+                } else if let sp = spotifyPaused, let doMatch = sp.title, !doMatch.isEmpty {
+                    self.activePlayerBundleId = "com.spotify.client"
+                    self.activePlayerName = "Spotify"
+                    self.handleSpotifyResult(title: doMatch, artist: sp.artist, album: sp.album, isPlaying: sp.isPlaying, duration: sp.duration, elapsed: sp.elapsed, artworkUrl: sp.artworkUrl, completion: completion)
+                } else {
+                    completion(mrTitle, mrArtist, mrArt, mrPlaying, mrDuration, mrElapsed, mrBundle, mrName)
+                }
+            }
+        }
+    }
+    
+    private func handleSpotifyResult(title: String, artist: String?, album: String?, isPlaying: Bool, duration: Double, elapsed: Double, artworkUrl: String?, completion: @escaping (String?, String?, NSImage?, Bool, Double, Double, String?, String?) -> Void) {
+        var artistStr = artist ?? ""
+        if let album = album, !album.isEmpty, !artistStr.isEmpty {
+            artistStr += " – \(album)"
+        } else if let album = album, !album.isEmpty {
+            artistStr = album
+        }
+        
+        let bundleId = "com.spotify.client"
+        let appName = "Spotify"
+        
+        if let artUrlStr = artworkUrl, !artUrlStr.isEmpty, let artUrl = URL(string: artUrlStr) {
+            if artUrlStr == self.spotifyCachedUrl && self.spotifyCachedArtwork != nil {
+                DispatchQueue.main.async {
+                    completion(title, artistStr, self.spotifyCachedArtwork, isPlaying, duration, elapsed, bundleId, appName)
+                }
+            } else {
+                self.spotifyCachedUrl = artUrlStr
+                URLSession.shared.dataTask(with: artUrl) { [weak self] data, _, _ in
+                    var img: NSImage? = nil
+                    if let data = data {
+                        img = NSImage(data: data)
+                        self?.spotifyCachedArtwork = img
+                    }
+                    DispatchQueue.main.async {
+                        completion(title, artistStr, img ?? self?.spotifyCachedArtwork, isPlaying, duration, elapsed, bundleId, appName)
+                    }
+                }.resume()
+            }
+        } else {
+            let query = "\(title) \(artist ?? "")"
+            if query == self.lastQuery && self.cachedArtwork != nil {
+                DispatchQueue.main.async {
+                    completion(title, artistStr, self.cachedArtwork, isPlaying, duration, elapsed, bundleId, appName)
+                }
+            } else {
+                self.lastQuery = query
+                var fallbackIcon: NSImage? = nil
+                if let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) {
+                    fallbackIcon = NSWorkspace.shared.icon(forFile: appURL.path)
+                }
+                self.cachedArtwork = fallbackIcon
+                
+                self.fetchITunesArtwork(title: title, artist: artist ?? "") { fetchedImage in
+                    if let fetchedImage = fetchedImage {
+                        self.cachedArtwork = fetchedImage
+                        DispatchQueue.main.async {
+                            completion(title, artistStr, fetchedImage, isPlaying, duration, elapsed, bundleId, appName)
+                        }
+                    }
+                }
+                
+                DispatchQueue.main.async {
+                    completion(title, artistStr, self.cachedArtwork, isPlaying, duration, elapsed, bundleId, appName)
+                }
+            }
+        }
+    }
+    
+    private func handleAppleMusicResult(title: String, artist: String?, album: String?, isPlaying: Bool, duration: Double, elapsed: Double, completion: @escaping (String?, String?, NSImage?, Bool, Double, Double, String?, String?) -> Void) {
+        var artistStr = artist ?? ""
+        if let album = album, !album.isEmpty, !artistStr.isEmpty {
+            artistStr += " – \(album)"
+        } else if let album = album, !album.isEmpty {
+            artistStr = album
+        }
+        
+        let bundleId = "com.apple.Music"
+        let appName = "Music"
+        
+        if let getNowPlayingInfo = getNowPlayingInfo {
+            getNowPlayingInfo(DispatchQueue.global(qos: .userInitiated)) { [weak self] info in
+                guard let self = self else { return }
+                if let artworkData = info["kMRMediaRemoteNowPlayingInfoArtworkData"] as? Data, artworkData.count > 0,
+                   let img = NSImage(data: artworkData) {
+                    self.cachedArtwork = img
+                    DispatchQueue.main.async {
+                        completion(title, artistStr, img, isPlaying, duration, elapsed, bundleId, appName)
+                    }
+                    return
+                }
+                
+                let query = "\(title) \(artist ?? "")"
+                if query == self.lastQuery && self.cachedArtwork != nil {
+                    DispatchQueue.main.async {
+                        completion(title, artistStr, self.cachedArtwork, isPlaying, duration, elapsed, bundleId, appName)
+                    }
+                } else {
+                    self.lastQuery = query
+                    var fallbackIcon: NSImage? = nil
+                    if let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) {
+                        fallbackIcon = NSWorkspace.shared.icon(forFile: appURL.path)
+                    }
+                    self.cachedArtwork = fallbackIcon
+                    
+                    self.fetchITunesArtwork(title: title, artist: artist ?? "") { fetchedImage in
+                        if let fetchedImage = fetchedImage {
+                            self.cachedArtwork = fetchedImage
+                            DispatchQueue.main.async {
+                                completion(title, artistStr, fetchedImage, isPlaying, duration, elapsed, bundleId, appName)
+                            }
+                        }
+                    }
+                    
+                    DispatchQueue.main.async {
+                        completion(title, artistStr, self.cachedArtwork, isPlaying, duration, elapsed, bundleId, appName)
+                    }
+                }
+            }
+        } else {
+            DispatchQueue.main.async {
+                completion(title, artistStr, nil, isPlaying, duration, elapsed, bundleId, appName)
             }
         }
     }
@@ -2070,6 +3915,164 @@ class MediaRemoteHelper {
 import Foundation
 import IOKit
 import IOKit.hid
+import IOKit.ps
+
+class BatteryMonitor {
+    static let shared = BatteryMonitor()
+    
+    var onPowerStateChanged: ((_ isAC: Bool, _ isCharging: Bool, _ level: Int) -> Void)?
+    
+    private(set) var currentIsAC: Bool = true
+    private(set) var currentLevel: Int = 100
+    private(set) var currentIsCharging: Bool = false
+    
+    private var lastIsAC: Bool = true
+    private var lastLevel: Int = 100
+    private var lastIsCharging: Bool = false
+    private var isFirstCheck = true
+    
+    private var runLoopSource: CFRunLoopSource?
+    private var pollTimer: Timer?
+    
+    private init() {}
+    
+    func start() {
+        let info = readPowerInfo()
+        self.lastIsAC = info.isAC
+        self.lastLevel = info.level
+        self.lastIsCharging = info.isCharging
+        self.currentIsAC = info.isAC
+        self.currentLevel = info.level
+        self.currentIsCharging = info.isCharging
+        self.isFirstCheck = false
+        
+        // Setup IOKit Power Source notification
+        let context = Unmanaged.passUnretained(self).toOpaque()
+        let loopSource = IOPSNotificationCreateRunLoopSource({ ctx in
+            guard let ctx = ctx else { return }
+            let monitor = Unmanaged<BatteryMonitor>.fromOpaque(ctx).takeUnretainedValue()
+            monitor.evaluatePowerChange()
+        }, context)
+        
+        if let source = loopSource?.takeRetainedValue() {
+            CFRunLoopAddSource(CFRunLoopGetMain(), source, .defaultMode)
+            self.runLoopSource = source
+        }
+        
+        // Fallback polling timer (every 2.0s) for robust Hackintosh hardware EC compatibility
+        pollTimer?.invalidate()
+        pollTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+            self?.evaluatePowerChange()
+        }
+    }
+    
+    func stop() {
+        if let source = runLoopSource {
+            CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .defaultMode)
+            runLoopSource = nil
+        }
+        pollTimer?.invalidate()
+        pollTimer = nil
+    }
+    
+    func evaluatePowerChange() {
+        let info = readPowerInfo()
+        self.currentIsAC = info.isAC
+        self.currentLevel = info.level
+        self.currentIsCharging = info.isCharging
+        
+        guard !isFirstCheck else { return }
+        
+        let acChanged = (lastIsAC != info.isAC)
+        let chargingStarted = (info.isAC && !lastIsCharging && info.isCharging)
+        
+        if acChanged || chargingStarted {
+            self.lastIsAC = info.isAC
+            self.lastLevel = info.level
+            self.lastIsCharging = info.isCharging
+            
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                self.onPowerStateChanged?(info.isAC, info.isCharging, info.level)
+            }
+        } else {
+            self.lastLevel = info.level
+            self.lastIsCharging = info.isCharging
+        }
+    }
+    
+    func readPowerInfo() -> (isAC: Bool, isCharging: Bool, level: Int) {
+        var isAC = true
+        var level = 100
+        var isCharging = false
+        var foundBattery = false
+        
+        if let snapshot = IOPSCopyPowerSourcesInfo()?.takeRetainedValue() {
+            let type = IOPSGetProvidingPowerSourceType(snapshot)?.takeRetainedValue() as? String
+            if type == (kIOPSBatteryPowerValue as String) {
+                isAC = false
+            } else if type == (kIOPSACPowerValue as String) {
+                isAC = true
+            }
+            
+            if let sources = IOPSCopyPowerSourcesList(snapshot)?.takeRetainedValue() as? [CFTypeRef] {
+                for ps in sources {
+                    if let desc = IOPSGetPowerSourceDescription(snapshot, ps)?.takeUnretainedValue() as? [String: Any] {
+                        if let state = desc[kIOPSPowerSourceStateKey as String] as? String {
+                            if state == (kIOPSACPowerValue as String) {
+                                isAC = true
+                            } else if state == (kIOPSBatteryPowerValue as String) {
+                                isAC = false
+                            }
+                        }
+                        if let curCap = desc[kIOPSCurrentCapacityKey as String] as? Int,
+                           let maxCap = desc[kIOPSMaxCapacityKey as String] as? Int,
+                           maxCap > 0 {
+                            level = min(100, max(0, Int((Double(curCap) / Double(maxCap)) * 100)))
+                            foundBattery = true
+                        }
+                        if let charging = desc[kIOPSIsChargingKey as String] as? Bool {
+                            isCharging = charging
+                        }
+                    }
+                }
+            }
+        }
+        
+        // If IOKit.ps list did not report battery details, read directly from IOKit AppleSmartBattery registry
+        if !foundBattery {
+            let smart = readAppleSmartBattery()
+            if let ac = smart.isAC { isAC = ac }
+            if let lvl = smart.level { level = lvl }
+            if let chg = smart.isCharging { isCharging = chg }
+        }
+        
+        return (isAC, isCharging, level)
+    }
+    
+    private func readAppleSmartBattery() -> (isAC: Bool?, isCharging: Bool?, level: Int?) {
+        let matching = IOServiceMatching("AppleSmartBattery")
+        let service = IOServiceGetMatchingService(0, matching)
+        guard service != 0 else { return (nil, nil, nil) }
+        defer { IOObjectRelease(service) }
+        
+        var propDict: Unmanaged<CFMutableDictionary>?
+        guard IORegistryEntryCreateCFProperties(service, &propDict, kCFAllocatorDefault, 0) == KERN_SUCCESS,
+              let props = propDict?.takeRetainedValue() as? [String: Any] else {
+            return (nil, nil, nil)
+        }
+        
+        let isAC = props["ExternalConnected"] as? Bool
+        let isCharging = props["IsCharging"] as? Bool
+        var level: Int? = nil
+        if let curCap = props["CurrentCapacity"] as? Int,
+           let maxCap = props["MaxCapacity"] as? Int,
+           maxCap > 0 {
+            level = min(100, Swift.max(0, Int((Double(curCap) / Double(maxCap)) * 100)))
+        }
+        return (isAC, isCharging, level)
+    }
+}
 
 class HardwareMonitor {
     static let shared = HardwareMonitor()
@@ -2448,8 +4451,6 @@ struct WeatherCardView: View {
             weatherHeader
             weatherDetails
         }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 16)
         .onAppear { fetchWeather() }
     }
     
@@ -2511,12 +4512,11 @@ struct SystemMonitorView: View {
     let timer = Timer.publish(every: 2.0, on: .main, in: .common).autoconnect()
     
     var body: some View {
-        VStack(spacing: 14) {
+        VStack(spacing: 11) {
             cpuRow
             memRow
+            batteryRow
         }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 16)
         .onAppear { refreshStats() }
         .onReceive(timer) { _ in refreshStats() }
     }
@@ -2573,6 +4573,52 @@ struct SystemMonitorView: View {
         }
     }
     
+    private var batteryRow: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: (viewModel.isBatteryCharging || viewModel.isACConnected) ? "bolt.batteryblock.fill" : "battery.75")
+                    .font(.system(size: 13))
+                    .foregroundColor((viewModel.isBatteryCharging || viewModel.isACConnected) ? Color.green : .yellow)
+                Text(LanguageManager.tr("Battery"))
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundColor(.white)
+                
+                Text(viewModel.isACConnected ? (viewModel.batteryLevel >= 100 ? "• \(LanguageManager.tr("Fully Charged"))" : "• \(LanguageManager.tr("Charging"))") : "• \(LanguageManager.tr("On Battery"))")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(.gray)
+                
+                Spacer()
+                
+                Text("\(viewModel.batteryLevel)%")
+                    .font(.system(size: 13, weight: .bold, design: .monospaced))
+                    .foregroundColor(batteryColor)
+                
+                // Test Charging Animation Button
+                Button(action: {
+                    viewModel.triggerBatteryHUD(isAC: true, isCharging: true, level: viewModel.batteryLevel)
+                }) {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundColor(.green)
+                        .padding(3)
+                        .background(Color.green.opacity(0.15))
+                        .clipShape(Circle())
+                }
+                .buttonStyle(PlainButtonStyle())
+                .help(LanguageManager.tr("Test Charging Animation"))
+            }
+            
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Color.white.opacity(0.1)).frame(height: 6)
+                    Capsule().fill(batteryColor).frame(width: max(0, geo.size.width * CGFloat(Double(viewModel.batteryLevel) / 100.0)), height: 6)
+                        .animation(.easeInOut(duration: 0.5), value: viewModel.batteryLevel)
+                }
+            }
+            .frame(height: 6)
+        }
+    }
+    
     private var cpuColor: Color {
         viewModel.cpuUsage > 80 ? .red : (viewModel.cpuUsage > 50 ? .orange : .green)
     }
@@ -2581,12 +4627,31 @@ struct SystemMonitorView: View {
         viewModel.memUsage > 80 ? .red : (viewModel.memUsage > 60 ? .orange : .purple)
     }
     
+    private var batteryColor: Color {
+        if viewModel.isACConnected || viewModel.isBatteryCharging {
+            return .green
+        } else if viewModel.batteryLevel <= 20 {
+            return .red
+        } else if viewModel.batteryLevel <= 40 {
+            return .orange
+        } else {
+            return .green
+        }
+    }
+    
     private func refreshStats() {
-        viewModel.cpuUsage = SystemMonitor.getCPUUsage()
-        let mem = SystemMonitor.getMemoryUsage()
-        viewModel.memUsage = mem.percent
-        viewModel.memUsed = SystemMonitor.formatBytes(mem.used)
-        viewModel.memTotal = SystemMonitor.formatBytes(mem.total)
+        DispatchQueue.main.async {
+            viewModel.cpuUsage = SystemMonitor.getCPUUsage()
+            let mem = SystemMonitor.getMemoryUsage()
+            viewModel.memUsage = mem.percent
+            viewModel.memUsed = SystemMonitor.formatBytes(mem.used)
+            viewModel.memTotal = SystemMonitor.formatBytes(mem.total)
+            
+            let pwr = BatteryMonitor.shared.readPowerInfo()
+            viewModel.isACConnected = pwr.isAC
+            viewModel.isBatteryCharging = pwr.isCharging
+            viewModel.batteryLevel = pwr.level
+        }
     }
 }
 
@@ -2715,8 +4780,7 @@ struct AgendaCardView: View {
                 listView
             }
         }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 16)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .onAppear {
             viewModel.fetchAgenda()
             resetNewTime()
@@ -2818,7 +4882,7 @@ struct AgendaCardView: View {
                 .buttonStyle(PlainButtonStyle())
             }
         }
-        .frame(height: 260)
+        .frame(height: 245)
         .onDisappear {
             isAdding = false
             newIsYearly = false
@@ -3000,6 +5064,1301 @@ struct AgendaCardView: View {
         }
     }
 }
+
+// MARK: - Photo Storage Manager
+struct PhotoStorageManager {
+    static var defaultFolderURL: URL {
+        let pictures = FileManager.default.urls(for: .picturesDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Pictures")
+        return pictures.appendingPathComponent("Notchify")
+    }
+    
+    static func getPhotosDirectory() -> URL {
+        let storageType = UserDefaults.standard.string(forKey: "photoStorageType") ?? "default"
+        let customPath = UserDefaults.standard.string(forKey: "customPhotoStoragePath") ?? ""
+        
+        if storageType == "custom" && !customPath.isEmpty {
+            let customURL = URL(fileURLWithPath: customPath)
+            if !FileManager.default.fileExists(atPath: customURL.path) {
+                try? FileManager.default.createDirectory(at: customURL, withIntermediateDirectories: true)
+            }
+            return customURL
+        }
+        
+        let def = defaultFolderURL
+        if !FileManager.default.fileExists(atPath: def.path) {
+            try? FileManager.default.createDirectory(at: def, withIntermediateDirectories: true)
+        }
+        return def
+    }
+    
+    static func openPhotosFolder() {
+        let dir = getPhotosDirectory()
+        NSWorkspace.shared.open(dir)
+    }
+    
+    static func revealPhotoInFinder(url: URL) {
+        NSWorkspace.shared.activateFileViewerSelecting([url])
+    }
+}
+
+// MARK: - Camera & Video Enums
+enum CameraCaptureMode: String, CaseIterable, Identifiable {
+    case photo = "Photo"
+    case video = "Video"
+    
+    var id: String { rawValue }
+    
+    var localizedTitle: String {
+        switch self {
+        case .photo: return LanguageManager.tr("Photo")
+        case .video: return LanguageManager.tr("Video")
+        }
+    }
+    
+    var iconName: String {
+        switch self {
+        case .photo: return "camera.fill"
+        case .video: return "video.fill"
+        }
+    }
+}
+
+enum VideoDurationPreset: Int, CaseIterable, Identifiable {
+    case sec15 = 15
+    case sec30 = 30
+    case sec60 = 60
+    case min3 = 180
+    case min5 = 300
+    
+    var id: Int { rawValue }
+    
+    var label: String {
+        switch self {
+        case .sec15: return "15s"
+        case .sec30: return "30s"
+        case .sec60: return "60s"
+        case .min3: return "3m"
+        case .min5: return "5m"
+        }
+    }
+    
+    var seconds: Int { rawValue }
+}
+
+// MARK: - Mirror & Camera Manager
+class CameraMirrorManager: NSObject, ObservableObject, AVCapturePhotoCaptureDelegate, AVCaptureFileOutputRecordingDelegate {
+    static let shared = CameraMirrorManager()
+    
+    @Published var isRunning = false
+    @Published var permissionGranted = false
+    @Published var isMirrored = true
+    @Published var isFrozen = false
+    
+    // Mode
+    @Published var captureMode: CameraCaptureMode = .photo
+    
+    // Photo capture states
+    @Published var isTimerEnabled = false // false = instant, true = 3s
+    @Published var isCountingDown = false
+    @Published var countdownSeconds = 3
+    @Published var isCapturing = false
+    @Published var showFlash = false
+    @Published var lastCapturedPhotoURL: URL?
+    @Published var lastCapturedThumbnail: NSImage?
+    @Published var lastCapturedImage: NSImage?
+    @Published var savedFeedbackMessage: String?
+    
+    // Video capture states
+    @Published var selectedDurationPreset: VideoDurationPreset = .sec30
+    @Published var isRecordingVideo = false
+    @Published var recordingElapsedSeconds: Int = 0
+    @Published var isMicMuted: Bool = false
+    @Published var lastCapturedVideoURL: URL?
+    @Published var lastCapturedMediaType: CameraCaptureMode = .photo
+    @Published var shouldOpenMediaViewer: Bool = false
+    
+    let session = AVCaptureSession()
+    let photoOutput = AVCapturePhotoOutput()
+    let movieOutput = AVCaptureMovieFileOutput()
+    private let sessionQueue = DispatchQueue(label: "notchify.mirror.sessionQueue")
+    private var isConfigured = false
+    private var videoInput: AVCaptureDeviceInput?
+    private var audioInput: AVCaptureDeviceInput?
+    private var countdownTimer: Timer?
+    private var recordingTimer: Timer?
+    
+    override init() {
+        super.init()
+    }
+    
+    func checkPermissionAndStart() {
+        // Request audio access if needed
+        if AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined {
+            AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
+                if granted {
+                    self?.sessionQueue.async {
+                        guard let self = self, self.isConfigured, self.audioInput == nil else { return }
+                        if let audioDevice = AVCaptureDevice.default(for: .audio),
+                           let aInput = try? AVCaptureDeviceInput(device: audioDevice) {
+                            self.session.beginConfiguration()
+                            if self.session.canAddInput(aInput) {
+                                self.session.addInput(aInput)
+                                self.audioInput = aInput
+                            }
+                            self.session.commitConfiguration()
+                        }
+                    }
+                }
+            }
+        }
+        
+        switch AVCaptureDevice.authorizationStatus(for: .video) {
+        case .authorized:
+            DispatchQueue.main.async { self.permissionGranted = true }
+            startSession()
+        case .notDetermined:
+            AVCaptureDevice.requestAccess(for: .video) { granted in
+                DispatchQueue.main.async {
+                    self.permissionGranted = granted
+                    if granted {
+                        self.startSession()
+                    }
+                }
+            }
+        case .denied, .restricted:
+            DispatchQueue.main.async { self.permissionGranted = false }
+        @unknown default:
+            break
+        }
+    }
+    
+    func startSession() {
+        sessionQueue.async { [weak self] in
+            guard let self = self else { return }
+            guard !self.session.isRunning else { return }
+            if !self.isConfigured {
+                self.setupSession()
+            }
+            self.session.startRunning()
+            DispatchQueue.main.async {
+                self.isRunning = self.session.isRunning
+            }
+        }
+    }
+    
+    func stopSession() {
+        cancelCountdown()
+        if isRecordingVideo {
+            stopVideoRecording()
+        }
+        sessionQueue.async { [weak self] in
+            guard let self = self else { return }
+            guard self.session.isRunning else { return }
+            self.session.stopRunning()
+            DispatchQueue.main.async {
+                self.isRunning = false
+            }
+        }
+    }
+    
+    private func setupSession() {
+        session.beginConfiguration()
+        if session.canSetSessionPreset(.high) {
+            session.sessionPreset = .high
+        } else if session.canSetSessionPreset(.medium) {
+            session.sessionPreset = .medium
+        }
+        
+        // Video Input
+        let discoverySession = AVCaptureDevice.DiscoverySession(
+            deviceTypes: [.builtInWideAngleCamera, .externalUnknown],
+            mediaType: .video,
+            position: .unspecified
+        )
+        let device = AVCaptureDevice.default(for: .video) ?? discoverySession.devices.first
+        if let camera = device, let input = try? AVCaptureDeviceInput(device: camera) {
+            if session.canAddInput(input) {
+                session.addInput(input)
+                self.videoInput = input
+            }
+        }
+        
+        // Audio Input
+        if let audioDevice = AVCaptureDevice.default(for: .audio),
+           let aInput = try? AVCaptureDeviceInput(device: audioDevice) {
+            if session.canAddInput(aInput) {
+                session.addInput(aInput)
+                self.audioInput = aInput
+            }
+        }
+        
+        // Photo Output
+        if session.canAddOutput(photoOutput) {
+            session.addOutput(photoOutput)
+        }
+        
+        // Movie Output (Hard-capped at 5 minutes = 300 seconds)
+        movieOutput.maxRecordedDuration = CMTime(seconds: 300, preferredTimescale: 600)
+        if session.canAddOutput(movieOutput) {
+            session.addOutput(movieOutput)
+        }
+        
+        session.commitConfiguration()
+        self.isConfigured = true
+    }
+    
+    // MARK: - Capture Sequence
+    func triggerCaptureSequence() {
+        guard !isCapturing && !isCountingDown else { return }
+        if isTimerEnabled {
+            startCountdown()
+        } else {
+            performCapture()
+        }
+    }
+    
+    func cancelCountdown() {
+        countdownTimer?.invalidate()
+        countdownTimer = nil
+        isCountingDown = false
+    }
+    
+    private func startCountdown() {
+        countdownSeconds = 3
+        isCountingDown = true
+        countdownTimer?.invalidate()
+        
+        countdownTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] timer in
+            guard let self = self else {
+                timer.invalidate()
+                return
+            }
+            if self.countdownSeconds > 1 {
+                self.countdownSeconds -= 1
+                NSSound(named: "Tink")?.play()
+            } else {
+                timer.invalidate()
+                self.countdownTimer = nil
+                self.isCountingDown = false
+                self.performCapture()
+            }
+        }
+    }
+    
+    private func performCapture() {
+        isCapturing = true
+        
+        // Visual Screen Flash
+        withAnimation(.easeIn(duration: 0.08)) {
+            self.showFlash = true
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+            withAnimation(.easeOut(duration: 0.25)) {
+                self.showFlash = false
+            }
+        }
+        
+        // Shutter Sound
+        let playSound = UserDefaults.standard.object(forKey: "playShutterSound") as? Bool ?? true
+        if playSound {
+            AudioServicesPlaySystemSound(1108)
+        }
+        
+        sessionQueue.async { [weak self] in
+            guard let self = self else { return }
+            let photoSettings = AVCapturePhotoSettings()
+            self.photoOutput.capturePhoto(with: photoSettings, delegate: self)
+        }
+    }
+    
+    // MARK: - AVCapturePhotoCaptureDelegate
+    func photoOutput(_ output: AVCapturePhotoOutput, didFinishProcessingPhoto photo: AVCapturePhoto, error: Error?) {
+        DispatchQueue.main.async {
+            self.isCapturing = false
+        }
+        
+        if let error = error {
+            print("Notchify camera error: \(error)")
+            return
+        }
+        
+        guard let data = photo.fileDataRepresentation(),
+              let originalImage = NSImage(data: data) else {
+            return
+        }
+        
+        let finalImage = self.isMirrored ? mirrorImage(originalImage) : originalImage
+        
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd_HHmmss"
+        let dateStr = formatter.string(from: Date())
+        let filename = "Notchify_\(dateStr).png"
+        
+        let targetDirectory = PhotoStorageManager.getPhotosDirectory()
+        let fileURL = targetDirectory.appendingPathComponent(filename)
+        
+        if let tiff = finalImage.tiffRepresentation,
+           let bitmap = NSBitmapImageRep(data: tiff),
+           let pngData = bitmap.representation(using: .png, properties: [:]) {
+            do {
+                try pngData.write(to: fileURL)
+                let thumb = makeThumbnail(image: finalImage, targetSize: NSSize(width: 32, height: 32))
+                
+                DispatchQueue.main.async {
+                    self.lastCapturedPhotoURL = fileURL
+                    self.lastCapturedThumbnail = thumb
+                    self.lastCapturedImage = finalImage
+                    self.lastCapturedMediaType = .photo
+                    self.savedFeedbackMessage = LanguageManager.tr("Saved!")
+                    
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                        if self.savedFeedbackMessage == LanguageManager.tr("Saved!") {
+                            self.savedFeedbackMessage = nil
+                        }
+                    }
+                }
+            } catch {
+                print("Failed to write photo: \(error)")
+            }
+        }
+    }
+    
+    // MARK: - Video Recording
+    func toggleMicMute() {
+        isMicMuted.toggle()
+        if let audioConn = movieOutput.connection(with: .audio) {
+            audioConn.isEnabled = !isMicMuted
+        }
+    }
+    
+    func startVideoRecording() {
+        guard !isRecordingVideo else { return }
+        
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd_HHmmss"
+        let dateStr = formatter.string(from: Date())
+        let filename = "Notchify_Video_\(dateStr).mp4"
+        let targetDirectory = PhotoStorageManager.getPhotosDirectory()
+        let fileURL = targetDirectory.appendingPathComponent(filename)
+        
+        try? FileManager.default.removeItem(at: fileURL)
+        
+        // Configure mirroring
+        if let videoConn = movieOutput.connection(with: .video) {
+            if videoConn.isVideoMirroringSupported {
+                videoConn.automaticallyAdjustsVideoMirroring = false
+                videoConn.isVideoMirrored = self.isMirrored
+            }
+        }
+        
+        // Configure audio
+        if let audioConn = movieOutput.connection(with: .audio) {
+            audioConn.isEnabled = !self.isMicMuted
+        }
+        
+        movieOutput.startRecording(to: fileURL, recordingDelegate: self)
+        
+        isRecordingVideo = true
+        recordingElapsedSeconds = 0
+        
+        NSSound(named: "Tink")?.play()
+        
+        recordingTimer?.invalidate()
+        recordingTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] timer in
+            guard let self = self else {
+                timer.invalidate()
+                return
+            }
+            self.recordingElapsedSeconds += 1
+            if self.recordingElapsedSeconds >= self.selectedDurationPreset.seconds {
+                self.stopVideoRecording()
+            }
+        }
+    }
+    
+    func stopVideoRecording() {
+        guard isRecordingVideo else { return }
+        recordingTimer?.invalidate()
+        recordingTimer = nil
+        movieOutput.stopRecording()
+    }
+    
+    // MARK: - AVCaptureFileOutputRecordingDelegate
+    func fileOutput(_ output: AVCaptureFileOutput, didFinishRecordingTo outputFileURL: URL, from connections: [AVCaptureConnection], error: Error?) {
+        DispatchQueue.main.async {
+            self.isRecordingVideo = false
+            self.recordingTimer?.invalidate()
+            self.recordingTimer = nil
+            
+            if let error = error {
+                let nsError = error as NSError
+                let success = (nsError.userInfo[AVErrorRecordingSuccessfullyFinishedKey] as? Bool) ?? false
+                if !success {
+                    print("Video recording failed: \(error)")
+                    return
+                }
+            }
+            
+            self.lastCapturedVideoURL = outputFileURL
+            self.lastCapturedMediaType = .video
+            self.generateVideoThumbnail(for: outputFileURL)
+            self.savedFeedbackMessage = LanguageManager.tr("Video Saved!")
+            self.shouldOpenMediaViewer = true
+            
+            NSSound(named: "Pop")?.play()
+            
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                if self.savedFeedbackMessage == LanguageManager.tr("Video Saved!") {
+                    self.savedFeedbackMessage = nil
+                }
+            }
+        }
+    }
+    
+    private func generateVideoThumbnail(for url: URL) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            let asset = AVAsset(url: url)
+            let generator = AVAssetImageGenerator(asset: asset)
+            generator.appliesPreferredTrackTransform = true
+            let time = CMTime(seconds: 0.2, preferredTimescale: 600)
+            if let cgImage = try? generator.copyCGImage(at: time, actualTime: nil) {
+                let img = NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
+                let thumb = self.makeThumbnail(image: img, targetSize: NSSize(width: 32, height: 32))
+                DispatchQueue.main.async {
+                    self.lastCapturedThumbnail = thumb
+                }
+            }
+        }
+    }
+    
+    func loadLatestMedia() {
+        guard lastCapturedPhotoURL == nil && lastCapturedVideoURL == nil else { return }
+        let dir = PhotoStorageManager.getPhotosDirectory()
+        let fileManager = FileManager.default
+        if let files = try? fileManager.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.contentModificationDateKey], options: .skipsHiddenFiles) {
+            let mediaFiles = files.filter {
+                let ext = $0.pathExtension.lowercased()
+                return ext == "png" || ext == "mp4" || ext == "mov"
+            }.sorted { (u1, u2) -> Bool in
+                let d1 = (try? u1.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? Date.distantPast
+                let d2 = (try? u2.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? Date.distantPast
+                return d1 > d2
+            }
+            
+            if let latest = mediaFiles.first {
+                let ext = latest.pathExtension.lowercased()
+                if ext == "mp4" || ext == "mov" {
+                    self.lastCapturedVideoURL = latest
+                    self.lastCapturedMediaType = .video
+                    self.generateVideoThumbnail(for: latest)
+                } else if ext == "png" {
+                    if let img = NSImage(contentsOf: latest) {
+                        self.lastCapturedPhotoURL = latest
+                        self.lastCapturedMediaType = .photo
+                        self.lastCapturedImage = img
+                        self.lastCapturedThumbnail = self.makeThumbnail(image: img, targetSize: NSSize(width: 32, height: 32))
+                    }
+                }
+            }
+        }
+    }
+    
+    func loadLatestPhoto() {
+        loadLatestMedia()
+    }
+    
+    private func mirrorImage(_ image: NSImage) -> NSImage {
+        let size = image.size
+        let mirrored = NSImage(size: size)
+        mirrored.lockFocus()
+        let transform = NSAffineTransform()
+        transform.translateX(by: size.width, yBy: 0)
+        transform.scaleX(by: -1, yBy: 1)
+        transform.concat()
+        image.draw(at: .zero, from: NSRect(origin: .zero, size: size), operation: .copy, fraction: 1.0)
+        mirrored.unlockFocus()
+        return mirrored
+    }
+    
+    private func makeThumbnail(image: NSImage, targetSize: NSSize) -> NSImage {
+        let thumb = NSImage(size: targetSize)
+        thumb.lockFocus()
+        image.draw(in: NSRect(origin: .zero, size: targetSize), from: NSRect(origin: .zero, size: image.size), operation: .copy, fraction: 1.0)
+        thumb.unlockFocus()
+        return thumb
+    }
+}
+
+class CameraPreviewNSView: NSView {
+    var previewLayer: AVCaptureVideoPreviewLayer {
+        return (layer as? AVCaptureVideoPreviewLayer) ?? AVCaptureVideoPreviewLayer()
+    }
+    
+    private var currentMirrored: Bool = true
+    private var currentFrozen: Bool = false
+    
+    override func makeBackingLayer() -> CALayer {
+        let pLayer = AVCaptureVideoPreviewLayer()
+        pLayer.cornerRadius = 16
+        pLayer.masksToBounds = true
+        return pLayer
+    }
+    
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layerContentsRedrawPolicy = .onSetNeedsDisplay
+    }
+    
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+    
+    override func layout() {
+        super.layout()
+        previewLayer.frame = bounds
+        applySettings()
+    }
+    
+    func updateSettings(isMirrored: Bool, isFrozen: Bool) {
+        self.currentMirrored = isMirrored
+        self.currentFrozen = isFrozen
+        applySettings()
+    }
+    
+    private func applySettings() {
+        guard let conn = previewLayer.connection else { return }
+        if conn.isVideoMirroringSupported {
+            conn.automaticallyAdjustsVideoMirroring = false
+            conn.isVideoMirrored = currentMirrored
+        }
+        conn.isEnabled = !currentFrozen
+    }
+}
+
+struct CameraPreviewView: NSViewRepresentable {
+    let session: AVCaptureSession
+    var isMirrored: Bool
+    var isFrozen: Bool
+    
+    func makeNSView(context: Context) -> CameraPreviewNSView {
+        let view = CameraPreviewNSView()
+        view.previewLayer.session = session
+        view.previewLayer.videoGravity = .resizeAspectFill
+        view.updateSettings(isMirrored: isMirrored, isFrozen: isFrozen)
+        return view
+    }
+    
+    func updateNSView(_ nsView: CameraPreviewNSView, context: Context) {
+        if nsView.previewLayer.session != session {
+            nsView.previewLayer.session = session
+        }
+        nsView.updateSettings(isMirrored: isMirrored, isFrozen: isFrozen)
+    }
+}
+
+struct InTabVideoPlayerView: View {
+    let url: URL
+    @State private var player: AVPlayer?
+    @State private var loopObserver: Any?
+    
+    var body: some View {
+        ZStack {
+            if let player = player {
+                VideoPlayer(player: player)
+                    .frame(width: 360, height: 195)
+                    .clipShape(RoundedRectangle(cornerRadius: 16))
+            } else {
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(Color.black)
+                    .frame(width: 360, height: 195)
+                    .overlay(
+                        ProgressView()
+                            .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                    )
+            }
+        }
+        .onAppear {
+            let p = AVPlayer(url: url)
+            self.player = p
+            p.play()
+            
+            self.loopObserver = NotificationCenter.default.addObserver(
+                forName: .AVPlayerItemDidPlayToEndTime,
+                object: p.currentItem,
+                queue: .main
+            ) { _ in
+                p.seek(to: .zero)
+                p.play()
+            }
+        }
+        .onDisappear {
+            if let observer = loopObserver {
+                NotificationCenter.default.removeObserver(observer)
+                loopObserver = nil
+            }
+            player?.pause()
+            player = nil
+        }
+    }
+}
+
+struct MirrorCardView: View {
+    @ObservedObject var viewModel: NotchViewModel
+    @StateObject private var cameraManager = CameraMirrorManager.shared
+    @State private var isViewingMedia = false
+    @State private var showCopiedFeedback = false
+    @State private var copiedFeedbackText = ""
+    @State private var recBlink = false
+    
+    var body: some View {
+        VStack(spacing: 8) {
+            if cameraManager.permissionGranted {
+                if isViewingMedia {
+                    mediaViewerContainer
+                        .transition(.asymmetric(
+                            insertion: .opacity.combined(with: .scale(scale: 0.95)),
+                            removal: .opacity.combined(with: .scale(scale: 0.95))
+                        ))
+                } else {
+                    mirrorContainer
+                        .transition(.asymmetric(
+                            insertion: .opacity.combined(with: .scale(scale: 0.95)),
+                            removal: .opacity.combined(with: .scale(scale: 0.95))
+                        ))
+                }
+            } else {
+                permissionNeededCard
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .onAppear {
+            cameraManager.checkPermissionAndStart()
+            cameraManager.loadLatestMedia()
+        }
+        .onDisappear {
+            cameraManager.stopSession()
+            isViewingMedia = false
+        }
+        .onReceive(cameraManager.$shouldOpenMediaViewer) { shouldOpen in
+            if shouldOpen {
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
+                    isViewingMedia = true
+                }
+                cameraManager.shouldOpenMediaViewer = false
+            }
+        }
+    }
+    
+    private var mirrorContainer: some View {
+        VStack(spacing: 8) {
+            // Top Mode Switcher Bar
+            HStack {
+                // Mode Switcher: Photo | Video
+                HStack(spacing: 2) {
+                    Button(action: {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+                            cameraManager.captureMode = .photo
+                        }
+                    }) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "camera.fill")
+                                .font(.system(size: 9, weight: .bold))
+                            Text(LanguageManager.tr("Photo"))
+                                .font(.system(size: 10, weight: .semibold))
+                        }
+                        .foregroundColor(cameraManager.captureMode == .photo ? .white : .gray)
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 4)
+                        .background(cameraManager.captureMode == .photo ? Color.white.opacity(0.2) : Color.clear)
+                        .clipShape(Capsule())
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .disabled(cameraManager.isRecordingVideo)
+                    
+                    Button(action: {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+                            cameraManager.captureMode = .video
+                        }
+                    }) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "video.fill")
+                                .font(.system(size: 9, weight: .bold))
+                            Text(LanguageManager.tr("Video"))
+                                .font(.system(size: 10, weight: .semibold))
+                        }
+                        .foregroundColor(cameraManager.captureMode == .video ? .white : .gray)
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 4)
+                        .background(cameraManager.captureMode == .video ? Color.red.opacity(0.85) : Color.clear)
+                        .clipShape(Capsule())
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .disabled(cameraManager.isRecordingVideo)
+                }
+                .padding(2)
+                .background(Color.white.opacity(0.08))
+                .clipShape(Capsule())
+                
+                Spacer()
+                
+                // Sub-mode options (Right)
+                if cameraManager.captureMode == .video {
+                    // Duration Presets: 15s | 30s | 60s | 3m | 5m
+                    HStack(spacing: 2) {
+                        ForEach(VideoDurationPreset.allCases) { preset in
+                            Button(action: {
+                                withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+                                    cameraManager.selectedDurationPreset = preset
+                                }
+                            }) {
+                                Text(preset.label)
+                                    .font(.system(size: 10, weight: cameraManager.selectedDurationPreset == preset ? .bold : .medium))
+                                    .foregroundColor(cameraManager.selectedDurationPreset == preset ? .white : .gray)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 3)
+                                    .background(cameraManager.selectedDurationPreset == preset ? Color.white.opacity(0.25) : Color.clear)
+                                    .clipShape(Capsule())
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                            .disabled(cameraManager.isRecordingVideo)
+                        }
+                    }
+                    .padding(2)
+                    .background(Color.white.opacity(0.06))
+                    .clipShape(Capsule())
+                } else {
+                    // Photo Timer Toggle: Instant / 3s
+                    Button(action: {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                            cameraManager.isTimerEnabled.toggle()
+                        }
+                    }) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "timer")
+                                .font(.system(size: 10, weight: .semibold))
+                            Text(cameraManager.isTimerEnabled ? "3s" : LanguageManager.tr("Off"))
+                                .font(.system(size: 10, weight: .medium))
+                        }
+                        .foregroundColor(cameraManager.isTimerEnabled ? .yellow : .white)
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 4)
+                        .background(cameraManager.isTimerEnabled ? Color.yellow.opacity(0.2) : Color.white.opacity(0.08))
+                        .clipShape(Capsule())
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .help(LanguageManager.tr("Timer: 3 seconds delay"))
+                }
+            }
+            .frame(width: 360)
+            
+            // Camera Video Preview Box
+            ZStack {
+                CameraPreviewView(
+                    session: cameraManager.session,
+                    isMirrored: cameraManager.isMirrored,
+                    isFrozen: cameraManager.isFrozen
+                )
+                .frame(width: 360, height: 195)
+                .clipShape(RoundedRectangle(cornerRadius: 16))
+                
+                // Elegant Border
+                RoundedRectangle(cornerRadius: 16)
+                    .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                    .frame(width: 360, height: 195)
+                
+                // Screen Flash Animation (Photo)
+                if cameraManager.showFlash {
+                    RoundedRectangle(cornerRadius: 16)
+                        .fill(Color.white)
+                        .frame(width: 360, height: 195)
+                        .transition(.opacity)
+                }
+                
+                // Countdown Overlay (3.. 2.. 1..)
+                if cameraManager.isCountingDown {
+                    ZStack {
+                        Circle()
+                            .fill(Color.black.opacity(0.65))
+                            .frame(width: 68, height: 68)
+                        
+                        Text("\(cameraManager.countdownSeconds)")
+                            .font(.system(size: 38, weight: .bold, design: .rounded))
+                            .foregroundColor(.yellow)
+                    }
+                    .transition(.scale(scale: 0.8).combined(with: .opacity))
+                }
+                
+                // Video Recording HUD (Top-left & Bottom progress bar)
+                if cameraManager.isRecordingVideo {
+                    VStack {
+                        HStack {
+                            HStack(spacing: 6) {
+                                Circle()
+                                    .fill(Color.red)
+                                    .frame(width: 8, height: 8)
+                                    .opacity(recBlink ? 1.0 : 0.2)
+                                    .animation(Animation.easeInOut(duration: 0.6).repeatForever(autoreverses: true), value: recBlink)
+                                    .onAppear { recBlink = true }
+                                
+                                Text(LanguageManager.tr("REC"))
+                                    .font(.system(size: 10, weight: .heavy))
+                                    .foregroundColor(.red)
+                                
+                                Text("\(formatSeconds(cameraManager.recordingElapsedSeconds)) / \(formatSeconds(cameraManager.selectedDurationPreset.seconds))")
+                                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                                    .foregroundColor(.white)
+                            }
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(Color.black.opacity(0.75))
+                            .clipShape(Capsule())
+                            .padding(.leading, 10)
+                            .padding(.top, 10)
+                            
+                            Spacer()
+                        }
+                        
+                        Spacer()
+                        
+                        // Bottom Progress Bar
+                        GeometryReader { geo in
+                            let progress = min(1.0, max(0.0, Double(cameraManager.recordingElapsedSeconds) / Double(max(1, cameraManager.selectedDurationPreset.seconds))))
+                            ZStack(alignment: .leading) {
+                                Rectangle()
+                                    .fill(Color.white.opacity(0.2))
+                                    .frame(height: 3)
+                                
+                                Rectangle()
+                                    .fill(Color.red)
+                                    .frame(width: geo.size.width * CGFloat(progress), height: 3)
+                                    .animation(.linear(duration: 1.0), value: progress)
+                            }
+                        }
+                        .frame(width: 360, height: 3)
+                        .clipShape(RoundedRectangle(cornerRadius: 1.5))
+                        .padding(.bottom, 6)
+                    }
+                    .frame(width: 360, height: 195)
+                }
+                
+                // Frozen Overlay Badge
+                if cameraManager.isFrozen && !cameraManager.isCountingDown && !cameraManager.isRecordingVideo {
+                    VStack {
+                        Spacer()
+                        HStack {
+                            Image(systemName: "pause.circle.fill")
+                                .font(.system(size: 11, weight: .bold))
+                            Text(LanguageManager.tr("Preview Paused"))
+                                .font(.system(size: 10, weight: .semibold))
+                        }
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .background(Color.black.opacity(0.65))
+                        .clipShape(Capsule())
+                        .padding(.bottom, 8)
+                    }
+                    .frame(width: 360, height: 195)
+                }
+                
+                // Saved Feedback Toast
+                if let msg = cameraManager.savedFeedbackMessage {
+                    VStack {
+                        HStack(spacing: 5) {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundColor(.green)
+                                .font(.system(size: 12, weight: .bold))
+                            Text(msg)
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundColor(.white)
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(Color.black.opacity(0.75))
+                        .clipShape(Capsule())
+                        .padding(.top, 10)
+                        Spacer()
+                    }
+                    .frame(width: 360, height: 195)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                }
+            }
+            .frame(width: 360, height: 195)
+            
+            // Floating Toolbar Controls
+            HStack(spacing: 14) {
+                // 1. Left auxiliary button
+                if cameraManager.captureMode == .video {
+                    // Mic mute/unmute toggle
+                    Button(action: {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                            cameraManager.toggleMicMute()
+                        }
+                    }) {
+                        Image(systemName: cameraManager.isMicMuted ? "mic.slash.fill" : "mic.fill")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(cameraManager.isMicMuted ? .red : .white)
+                            .frame(width: 30, height: 30)
+                            .background(cameraManager.isMicMuted ? Color.red.opacity(0.2) : Color.white.opacity(0.1))
+                            .clipShape(Circle())
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .help(cameraManager.isMicMuted ? LanguageManager.tr("Microphone Muted") : LanguageManager.tr("Microphone Active"))
+                } else {
+                    // Freeze frame button (Photo mode)
+                    Button(action: {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                            cameraManager.isFrozen.toggle()
+                        }
+                    }) {
+                        Image(systemName: cameraManager.isFrozen ? "play.fill" : "pause.fill")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(cameraManager.isFrozen ? .yellow : .white)
+                            .frame(width: 30, height: 30)
+                            .background(cameraManager.isFrozen ? Color.yellow.opacity(0.2) : Color.white.opacity(0.1))
+                            .clipShape(Circle())
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .help(LanguageManager.tr("Freeze frame to check details"))
+                }
+                
+                // 2. Flip Mirror / Audience View
+                Button(action: {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        cameraManager.isMirrored.toggle()
+                    }
+                }) {
+                    Image(systemName: "arrow.left.and.right.righttriangle.left.righttriangle.right.fill")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(.white)
+                        .frame(width: 30, height: 30)
+                        .background(Color.white.opacity(0.1))
+                        .clipShape(Circle())
+                }
+                .buttonStyle(PlainButtonStyle())
+                .disabled(cameraManager.isRecordingVideo)
+                .help(cameraManager.isMirrored ? LanguageManager.tr("Mirrored (Click for True View)") : LanguageManager.tr("True View (Click for Mirrored)"))
+                
+                // 3. MAIN ACTION BUTTON (Center)
+                if cameraManager.captureMode == .video {
+                    if cameraManager.isRecordingVideo {
+                        // STOP RECORDING BUTTON
+                        Button(action: {
+                            cameraManager.stopVideoRecording()
+                        }) {
+                            ZStack {
+                                Circle()
+                                    .stroke(Color.red, lineWidth: 2.5)
+                                    .frame(width: 36, height: 36)
+                                
+                                RoundedRectangle(cornerRadius: 4)
+                                    .fill(Color.red)
+                                    .frame(width: 15, height: 15)
+                            }
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                        .help(LanguageManager.tr("Stop Recording"))
+                    } else {
+                        // START RECORDING BUTTON
+                        Button(action: {
+                            cameraManager.startVideoRecording()
+                        }) {
+                            ZStack {
+                                Circle()
+                                    .stroke(Color.white, lineWidth: 2.5)
+                                    .frame(width: 36, height: 36)
+                                
+                                Circle()
+                                    .fill(Color.red)
+                                    .frame(width: 26, height: 26)
+                            }
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                        .help(LanguageManager.tr("Record Video"))
+                    }
+                } else {
+                    // PHOTO SHUTTER BUTTON
+                    Button(action: {
+                        cameraManager.triggerCaptureSequence()
+                    }) {
+                        ZStack {
+                            Circle()
+                                .stroke(Color.white, lineWidth: 2.5)
+                                .frame(width: 36, height: 36)
+                            
+                            Circle()
+                                .fill(cameraManager.isCountingDown ? Color.yellow : Color.white)
+                                .frame(width: 26, height: 26)
+                        }
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .disabled(cameraManager.isCapturing || cameraManager.isCountingDown)
+                    .help(LanguageManager.tr("Take Photo"))
+                }
+                
+                // 4. Freeze button in Video Mode
+                if cameraManager.captureMode == .video {
+                    Button(action: {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                            cameraManager.isFrozen.toggle()
+                        }
+                    }) {
+                        Image(systemName: cameraManager.isFrozen ? "play.fill" : "pause.fill")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(cameraManager.isFrozen ? .yellow : .white)
+                            .frame(width: 30, height: 30)
+                            .background(cameraManager.isFrozen ? Color.yellow.opacity(0.2) : Color.white.opacity(0.1))
+                            .clipShape(Circle())
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .disabled(cameraManager.isRecordingVideo)
+                    .help(LanguageManager.tr("Freeze frame to check details"))
+                }
+                
+                // 5. Last Media Thumbnail or Open Folder Button
+                if let thumb = cameraManager.lastCapturedThumbnail {
+                    Button(action: {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
+                            isViewingMedia = true
+                        }
+                    }) {
+                        ZStack(alignment: .bottomTrailing) {
+                            Image(nsImage: thumb)
+                                .resizable()
+                                .aspectRatio(contentMode: .fill)
+                                .frame(width: 30, height: 30)
+                                .clipShape(Circle())
+                                .overlay(
+                                    Circle()
+                                        .stroke(Color.white, lineWidth: 1.5)
+                                )
+                            
+                            if cameraManager.lastCapturedMediaType == .video {
+                                Image(systemName: "video.fill")
+                                    .font(.system(size: 7, weight: .bold))
+                                    .foregroundColor(.white)
+                                    .padding(2)
+                                    .background(Color.red)
+                                    .clipShape(Circle())
+                                    .offset(x: 2, y: 2)
+                            }
+                        }
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .disabled(cameraManager.isRecordingVideo)
+                    .help(LanguageManager.tr("View latest media"))
+                } else {
+                    Button(action: {
+                        PhotoStorageManager.openPhotosFolder()
+                    }) {
+                        Image(systemName: "folder.fill")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(.gray)
+                            .frame(width: 30, height: 30)
+                            .background(Color.white.opacity(0.1))
+                            .clipShape(Circle())
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .disabled(cameraManager.isRecordingVideo)
+                    .help(LanguageManager.tr("Open Photos Folder"))
+                }
+            }
+            .frame(width: 360)
+        }
+    }
+    
+    private var mediaViewerContainer: some View {
+        VStack(spacing: 10) {
+            // Media Preview Box (Matches 360 x 195 frame)
+            ZStack {
+                if cameraManager.lastCapturedMediaType == .video, let videoURL = cameraManager.lastCapturedVideoURL {
+                    InTabVideoPlayerView(url: videoURL)
+                } else if let image = cameraManager.lastCapturedImage ?? (cameraManager.lastCapturedPhotoURL.flatMap { NSImage(contentsOf: $0) }) {
+                    Image(nsImage: image)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .frame(width: 360, height: 195)
+                        .clipShape(RoundedRectangle(cornerRadius: 16))
+                } else {
+                    RoundedRectangle(cornerRadius: 16)
+                        .fill(Color.black.opacity(0.4))
+                        .frame(width: 360, height: 195)
+                        .overlay(
+                            Text(LanguageManager.tr("No Media"))
+                                .foregroundColor(.gray)
+                                .font(.system(size: 12))
+                        )
+                }
+                
+                // Border
+                RoundedRectangle(cornerRadius: 16)
+                    .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                    .frame(width: 360, height: 195)
+                
+                // Copied Toast Overlay
+                if showCopiedFeedback {
+                    VStack {
+                        HStack(spacing: 5) {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundColor(.green)
+                                .font(.system(size: 12, weight: .bold))
+                            Text(copiedFeedbackText)
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundColor(.white)
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(Color.black.opacity(0.85))
+                        .clipShape(Capsule())
+                        .padding(.top, 10)
+                        Spacer()
+                    }
+                    .frame(width: 360, height: 195)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                }
+            }
+            .frame(width: 360, height: 195)
+            
+            // Media Viewer Toolbar (Back, Copy Image/Video, Open Folder)
+            HStack(spacing: 10) {
+                // Back to Camera
+                Button(action: {
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
+                        isViewingMedia = false
+                    }
+                }) {
+                    HStack(spacing: 5) {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 10, weight: .bold))
+                        Text(LanguageManager.tr("Camera"))
+                            .font(.system(size: 11, weight: .medium))
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(Color.white.opacity(0.12))
+                    .clipShape(Capsule())
+                }
+                .buttonStyle(PlainButtonStyle())
+                .help(LanguageManager.tr("Back to Camera"))
+                
+                Spacer()
+                
+                // Copy Media Button
+                Button(action: {
+                    copyMediaToClipboard()
+                }) {
+                    HStack(spacing: 5) {
+                        Image(systemName: "doc.on.doc")
+                            .font(.system(size: 10, weight: .semibold))
+                        Text(cameraManager.lastCapturedMediaType == .video ? LanguageManager.tr("Copy Video") : LanguageManager.tr("Copy Image"))
+                            .font(.system(size: 11, weight: .medium))
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 5)
+                    .background(Color.white.opacity(0.12))
+                    .clipShape(Capsule())
+                }
+                .buttonStyle(PlainButtonStyle())
+                .help(cameraManager.lastCapturedMediaType == .video ? LanguageManager.tr("Copy video to clipboard") : LanguageManager.tr("Copy photo to clipboard"))
+                
+                // Open Folder Button
+                Button(action: {
+                    let targetURL = cameraManager.lastCapturedMediaType == .video ? cameraManager.lastCapturedVideoURL : cameraManager.lastCapturedPhotoURL
+                    if let url = targetURL {
+                        PhotoStorageManager.revealPhotoInFinder(url: url)
+                    } else {
+                        PhotoStorageManager.openPhotosFolder()
+                    }
+                }) {
+                    HStack(spacing: 5) {
+                        Image(systemName: "folder")
+                            .font(.system(size: 10, weight: .semibold))
+                        Text(LanguageManager.tr("Open Folder"))
+                            .font(.system(size: 11, weight: .medium))
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 5)
+                    .background(Color.white.opacity(0.12))
+                    .clipShape(Capsule())
+                }
+                .buttonStyle(PlainButtonStyle())
+                .help(LanguageManager.tr("Open in Finder"))
+            }
+            .frame(width: 360)
+        }
+    }
+    
+    private func copyMediaToClipboard() {
+        if cameraManager.lastCapturedMediaType == .video {
+            guard let url = cameraManager.lastCapturedVideoURL else { return }
+            let pasteboard = NSPasteboard.general
+            pasteboard.clearContents()
+            pasteboard.writeObjects([url as NSURL])
+            copiedFeedbackText = LanguageManager.tr("Video Copied to Clipboard")
+        } else {
+            guard let image = cameraManager.lastCapturedImage ?? (cameraManager.lastCapturedPhotoURL.flatMap { NSImage(contentsOf: $0) }) else { return }
+            let pasteboard = NSPasteboard.general
+            pasteboard.clearContents()
+            pasteboard.writeObjects([image])
+            copiedFeedbackText = LanguageManager.tr("Image Copied to Clipboard")
+        }
+        
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+            showCopiedFeedback = true
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+            withAnimation(.easeOut(duration: 0.2)) {
+                showCopiedFeedback = false
+            }
+        }
+    }
+    
+    private func formatSeconds(_ secs: Int) -> String {
+        let m = secs / 60
+        let s = secs % 60
+        return String(format: "%02d:%02d", m, s)
+    }
+    
+    private var permissionNeededCard: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "camera.badge.ellipsis")
+                .font(.system(size: 36))
+                .foregroundColor(.orange)
+            
+            Text(LanguageManager.tr("Camera Access Needed"))
+                .font(.system(size: 14, weight: .bold))
+                .foregroundColor(.white)
+            
+            Text(LanguageManager.tr("Notchify needs camera access to show your quick webcam mirror preview."))
+                .font(.system(size: 11))
+                .foregroundColor(.gray)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 20)
+            
+            Button(action: {
+                if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Camera") {
+                    NSWorkspace.shared.open(url)
+                }
+            }) {
+                Text(LanguageManager.tr("Open System Settings"))
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 6)
+                    .background(Color.blue)
+                    .clipShape(Capsule())
+            }
+            .buttonStyle(PlainButtonStyle())
+        }
+        .frame(width: 360, height: 230)
+    }
+}
+
 struct LiveScrubberView: View {
     @ObservedObject var viewModel: NotchViewModel
     @State private var localElapsed: Double = 0
@@ -3040,6 +6399,871 @@ struct LiveScrubberView: View {
         let minutes = totalSeconds / 60
         let seconds = totalSeconds % 60
         return String(format: "%d:%02d", minutes, seconds)
+    }
+}
+
+// MARK: - Scratchpad & To-Do Models & Views
+struct TodoTask: Identifiable, Codable, Equatable {
+    var id: UUID = UUID()
+    var title: String
+    var isDone: Bool = false
+    var createdAt: Date = Date()
+}
+
+enum NotesSubMode: String, CaseIterable {
+    case notes = "Notes"
+    case todo = "To-Do"
+    
+    var localizedTitle: String {
+        switch self {
+        case .notes: return LanguageManager.tr("Notes")
+        case .todo: return LanguageManager.tr("To-Do")
+        }
+    }
+}
+
+struct NotesCardView: View {
+    @ObservedObject var viewModel: NotchViewModel
+    @AppStorage("scratchpadText") private var scratchpadText: String = ""
+    @AppStorage("todoTasksJSON") private var todoTasksJSON: String = "[]"
+    
+    @State private var subMode: NotesSubMode = .notes
+    @State private var newTaskTitle: String = ""
+    @State private var showCopiedCheck: Bool = false
+    @State private var todoTasks: [TodoTask] = []
+    
+    private var wordCount: Int {
+        let trimmed = scratchpadText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { return 0 }
+        return trimmed.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.count
+    }
+    
+    private var completedCount: Int {
+        todoTasks.filter { $0.isDone }.count
+    }
+    
+    var body: some View {
+        VStack(spacing: 8) {
+            // Mode Switcher Header
+            HStack {
+                HStack(spacing: 4) {
+                    ForEach(NotesSubMode.allCases, id: \.self) { mode in
+                        Button(action: {
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+                                subMode = mode
+                            }
+                        }) {
+                            HStack(spacing: 4) {
+                                Image(systemName: mode == .notes ? "note.text" : "checklist")
+                                    .font(.system(size: 10, weight: .semibold))
+                                Text(mode.localizedTitle)
+                                    .font(.system(size: 11, weight: subMode == mode ? .bold : .medium))
+                                if mode == .todo && !todoTasks.isEmpty {
+                                    Text("\(todoTasks.count - completedCount)")
+                                        .font(.system(size: 9, weight: .bold))
+                                        .padding(.horizontal, 4)
+                                        .padding(.vertical, 1)
+                                        .background(Capsule().fill(subMode == mode ? Color.blue : Color.white.opacity(0.15)))
+                                }
+                            }
+                            .foregroundColor(subMode == mode ? .white : .gray)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 4)
+                            .background(
+                                Capsule()
+                                    .fill(subMode == mode ? Color.white.opacity(0.18) : Color.clear)
+                            )
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                    }
+                }
+                .padding(3)
+                .background(Capsule().fill(Color.white.opacity(0.08)))
+                
+                Spacer()
+                
+                if subMode == .notes {
+                    // Quick Action Buttons
+                    HStack(spacing: 6) {
+                        Button(action: copyAllNotes) {
+                            HStack(spacing: 3) {
+                                Image(systemName: showCopiedCheck ? "checkmark" : "doc.on.doc")
+                                    .font(.system(size: 9, weight: .bold))
+                                Text(showCopiedCheck ? LanguageManager.tr("Copied!") : LanguageManager.tr("Copy All"))
+                                    .font(.system(size: 10, weight: .medium))
+                            }
+                            .foregroundColor(showCopiedCheck ? .green : .white.opacity(0.75))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Capsule().fill(Color.white.opacity(0.08)))
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                        
+                        Button(action: exportToAppleNotes) {
+                            Image(systemName: "arrow.up.forward.app")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundColor(.white.opacity(0.75))
+                                .padding(5)
+                                .background(Circle().fill(Color.white.opacity(0.08)))
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                        .help(LanguageManager.tr("Export to Notes"))
+                        
+                        if !scratchpadText.isEmpty {
+                            Button(action: {
+                                withAnimation { scratchpadText = "" }
+                            }) {
+                                Image(systemName: "trash")
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .foregroundColor(.red.opacity(0.8))
+                                    .padding(5)
+                                    .background(Circle().fill(Color.white.opacity(0.08)))
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                            .help(LanguageManager.tr("Clear"))
+                        }
+                    }
+                } else {
+                    if completedCount > 0 {
+                        Button(action: clearCompletedTasks) {
+                            HStack(spacing: 3) {
+                                Image(systemName: "trash")
+                                    .font(.system(size: 9))
+                                Text(LanguageManager.tr("Clear Completed"))
+                                    .font(.system(size: 10, weight: .medium))
+                            }
+                            .foregroundColor(.red.opacity(0.8))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Capsule().fill(Color.white.opacity(0.08)))
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                    }
+                }
+            }
+            .frame(width: 336)
+            
+            // Content Body
+            if subMode == .notes {
+                notesView
+                    .frame(width: 336)
+            } else {
+                todoView
+                    .frame(width: 336)
+            }
+        }
+        .onAppear {
+            loadTasks()
+        }
+    }
+    
+    private var notesView: some View {
+        VStack(spacing: 4) {
+            ZStack(alignment: .topLeading) {
+                if scratchpadText.isEmpty {
+                    Text(LanguageManager.tr("Type notes or paste snippets..."))
+                        .font(.system(size: 12))
+                        .foregroundColor(.gray.opacity(0.7))
+                        .padding(.top, 8)
+                        .padding(.leading, 6)
+                }
+                
+                TextEditor(text: $scratchpadText)
+                    .font(.system(size: 12, weight: .regular))
+                    .foregroundColor(.white)
+                    .lineSpacing(3)
+                    .padding(4)
+                    .background(Color.clear)
+            }
+            .frame(height: 155)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(Color.white.opacity(0.05))
+                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.white.opacity(0.1), lineWidth: 0.5))
+            )
+            
+            // Footer Counter
+            HStack {
+                Text("\(scratchpadText.count) " + LanguageManager.tr("Characters") + " • \(wordCount) " + LanguageManager.tr("Words"))
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(.gray)
+                Spacer()
+            }
+            .padding(.horizontal, 4)
+        }
+    }
+    
+    private var todoView: some View {
+        VStack(spacing: 6) {
+            // Add Task Field
+            HStack(spacing: 6) {
+                Image(systemName: "circle")
+                    .font(.system(size: 12))
+                    .foregroundColor(.gray)
+                
+                TextField(LanguageManager.tr("Add a task..."), text: $newTaskTitle)
+                    .font(.system(size: 12))
+                    .textFieldStyle(PlainTextFieldStyle())
+                    .foregroundColor(.white)
+                    .onSubmit(addTask)
+                
+                if !newTaskTitle.isEmpty {
+                    Button(action: addTask) {
+                        Image(systemName: "plus.circle.fill")
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundColor(.blue)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.white.opacity(0.07))
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.12), lineWidth: 0.5))
+            )
+            
+            // Task List
+            if todoTasks.isEmpty {
+                VStack(spacing: 4) {
+                    Spacer()
+                    Image(systemName: "checkmark.circle")
+                        .font(.system(size: 20))
+                        .foregroundColor(.gray.opacity(0.5))
+                    Text(LanguageManager.tr("No tasks yet"))
+                        .font(.system(size: 11))
+                        .foregroundColor(.gray)
+                    Spacer()
+                }
+                .frame(height: 130)
+            } else {
+                ScrollView(.vertical, showsIndicators: false) {
+                    VStack(spacing: 4) {
+                        ForEach(todoTasks) { task in
+                            TodoRowView(task: task, onToggle: {
+                                toggleTask(task)
+                            }, onDelete: {
+                                deleteTask(task)
+                            })
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
+                .frame(height: 130)
+            }
+            
+            // Progress Footer
+            HStack {
+                Text("\(completedCount)/\(todoTasks.count) " + LanguageManager.tr("completed"))
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(.gray)
+                Spacer()
+            }
+            .padding(.horizontal, 4)
+        }
+    }
+    
+    private func addTask() {
+        let trimmed = newTaskTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+            todoTasks.insert(TodoTask(title: trimmed), at: 0)
+            newTaskTitle = ""
+            saveTasks()
+        }
+    }
+    
+    private func toggleTask(_ task: TodoTask) {
+        guard let idx = todoTasks.firstIndex(where: { $0.id == task.id }) else { return }
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+            todoTasks[idx].isDone.toggle()
+            saveTasks()
+        }
+    }
+    
+    private func deleteTask(_ task: TodoTask) {
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+            todoTasks.removeAll { $0.id == task.id }
+            saveTasks()
+        }
+    }
+    
+    private func clearCompletedTasks() {
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+            todoTasks.removeAll { $0.isDone }
+            saveTasks()
+        }
+    }
+    
+    private func saveTasks() {
+        if let data = try? JSONEncoder().encode(todoTasks), let str = String(data: data, encoding: .utf8) {
+            todoTasksJSON = str
+        }
+    }
+    
+    private func loadTasks() {
+        if let data = todoTasksJSON.data(using: .utf8), let list = try? JSONDecoder().decode([TodoTask].self, from: data) {
+            todoTasks = list
+        }
+    }
+    
+    private func copyAllNotes() {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(scratchpadText, forType: .string)
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+            showCopiedCheck = true
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) {
+            withAnimation(.easeOut(duration: 0.2)) {
+                showCopiedCheck = false
+            }
+        }
+    }
+    
+    private func exportToAppleNotes() {
+        let escaped = scratchpadText
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+            .replacingOccurrences(of: "\n", with: "<br>")
+        let script = """
+        tell application "Notes"
+            tell default account
+                make new note with properties {body:"\(escaped)"}
+            end tell
+            activate
+        end tell
+        """
+        DispatchQueue.global(qos: .userInitiated).async {
+            var error: NSDictionary?
+            NSAppleScript(source: script)?.executeAndReturnError(&error)
+        }
+    }
+}
+
+struct TodoRowView: View {
+    let task: TodoTask
+    let onToggle: () -> Void
+    let onDelete: () -> Void
+    @State private var isHovered = false
+    
+    var body: some View {
+        HStack(spacing: 8) {
+            Button(action: onToggle) {
+                Image(systemName: task.isDone ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(task.isDone ? .green : .gray)
+            }
+            .buttonStyle(PlainButtonStyle())
+            
+            Text(task.title)
+                .font(.system(size: 11, weight: task.isDone ? .regular : .medium))
+                .strikethrough(task.isDone, color: .gray)
+                .foregroundColor(task.isDone ? .gray.opacity(0.7) : .white)
+                .lineLimit(2)
+            
+            Spacer()
+            
+            if isHovered {
+                Button(action: onDelete) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 11))
+                        .foregroundColor(.gray)
+                }
+                .buttonStyle(PlainButtonStyle())
+                .transition(.opacity)
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(isHovered ? Color.white.opacity(0.06) : Color.white.opacity(0.02))
+        )
+        .onHover { h in
+            withAnimation(.easeInOut(duration: 0.15)) {
+                isHovered = h
+            }
+        }
+    }
+}
+
+// MARK: - Network Radar Views & Manager
+struct SparklineView: View {
+    let data: [CGFloat]
+    let color: Color
+    
+    var body: some View {
+        GeometryReader { geo in
+            let w = geo.size.width
+            let h = geo.size.height
+            let maxVal = max(data.max() ?? 1, 1024)
+            
+            Path { path in
+                guard data.count > 1 else { return }
+                let step = w / CGFloat(data.count - 1)
+                for (idx, val) in data.enumerated() {
+                    let normY = h - (CGFloat(val) / maxVal) * (h - 4) - 2
+                    let pt = CGPoint(x: CGFloat(idx) * step, y: max(min(normY, h), 0))
+                    if idx == 0 {
+                        path.move(to: pt)
+                    } else {
+                        path.addLine(to: pt)
+                    }
+                }
+            }
+            .stroke(color, style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
+        }
+    }
+}
+
+class NetworkSpeedManager: ObservableObject {
+    static let shared = NetworkSpeedManager()
+    
+    @Published var downloadSpeed: Double = 0.0
+    @Published var uploadSpeed: Double = 0.0
+    @Published var downloadHistory: [CGFloat] = Array(repeating: 0, count: 16)
+    @Published var uploadHistory: [CGFloat] = Array(repeating: 0, count: 16)
+    
+    @Published var wifiSSID: String = "Wi-Fi"
+    @Published var signalBars: Int = 3
+    @Published var frequencyBand: String = "5 GHz"
+    @Published var pingMs: Int = 24
+    @Published var localIP: String = "127.0.0.1"
+    @Published var publicIP: String = "..."
+    @Published var isFetchingPublicIP: Bool = false
+    
+    var signalIcon: String {
+        switch signalBars {
+        case 1: return "wifi.exclamationmark"
+        case 2: return "wifi"
+        case 3: return "wifi"
+        default: return "wifi"
+        }
+    }
+    
+    var pingColor: Color {
+        if pingMs <= 50 { return .green }
+        if pingMs <= 120 { return .yellow }
+        return .red
+    }
+    
+    private var timer: Timer?
+    private var prevInBytes: UInt64 = 0
+    private var prevOutBytes: UInt64 = 0
+    private var lastSampleTime: Date = Date()
+    
+    private init() {
+        refreshIPs()
+        checkWiFi()
+        testPing()
+    }
+    
+    func startMonitoring() {
+        stopMonitoring()
+        sampleBytes()
+        timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            self?.tick()
+        }
+        refreshIPs()
+        checkWiFi()
+        testPing()
+    }
+    
+    func stopMonitoring() {
+        timer?.invalidate()
+        timer = nil
+    }
+    
+    private func tick() {
+        let (inBytes, outBytes) = getNetworkBytes()
+        let now = Date()
+        let interval = max(now.timeIntervalSince(lastSampleTime), 0.5)
+        lastSampleTime = now
+        
+        if prevInBytes > 0 && inBytes >= prevInBytes {
+            let dBytes = inBytes - prevInBytes
+            let speed = Double(dBytes) / interval
+            DispatchQueue.main.async {
+                self.downloadSpeed = speed
+                self.downloadHistory.removeFirst()
+                self.downloadHistory.append(CGFloat(speed))
+            }
+        }
+        if prevOutBytes > 0 && outBytes >= prevOutBytes {
+            let uBytes = outBytes - prevOutBytes
+            let speed = Double(uBytes) / interval
+            DispatchQueue.main.async {
+                self.uploadSpeed = speed
+                self.uploadHistory.removeFirst()
+                self.uploadHistory.append(CGFloat(speed))
+            }
+        }
+        prevInBytes = inBytes
+        prevOutBytes = outBytes
+        
+        if Int(Date().timeIntervalSince1970) % 5 == 0 {
+            checkWiFi()
+            testPing()
+        }
+    }
+    
+    private func sampleBytes() {
+        let (inBytes, outBytes) = getNetworkBytes()
+        prevInBytes = inBytes
+        prevOutBytes = outBytes
+        lastSampleTime = Date()
+    }
+    
+    private func getNetworkBytes() -> (UInt64, UInt64) {
+        var totalIn: UInt64 = 0
+        var totalOut: UInt64 = 0
+        
+        var ifap: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&ifap) == 0, let first = ifap else { return (0, 0) }
+        defer { freeifaddrs(ifap) }
+        
+        for ptr in sequence(first: first, next: { $0.pointee.ifa_next }) {
+            let ifa = ptr.pointee
+            let name = String(cString: ifa.ifa_name)
+            guard !name.hasPrefix("lo"), (name.hasPrefix("en") || name.hasPrefix("bridge") || name.hasPrefix("pdp_ip")) else { continue }
+            
+            if ifa.ifa_addr.pointee.sa_family == UInt8(AF_LINK) {
+                if let data = ifa.ifa_data {
+                    let networkData = data.assumingMemoryBound(to: if_data.self).pointee
+                    totalIn += UInt64(networkData.ifi_ibytes)
+                    totalOut += UInt64(networkData.ifi_obytes)
+                }
+            }
+        }
+        return (totalIn, totalOut)
+    }
+    
+    func checkWiFi() {
+        if let client = CWWiFiClient.shared().interface() {
+            let ssid = client.ssid() ?? "Wi-Fi Connected"
+            let rssi = client.rssiValue()
+            let band = client.wlanChannel()?.channelBand == .band2GHz ? "2.4 GHz" : (client.wlanChannel()?.channelBand == .band5GHz ? "5 GHz" : "Wi-Fi")
+            
+            var bars = 3
+            if rssi < -80 { bars = 1 }
+            else if rssi < -70 { bars = 2 }
+            else if rssi < -55 { bars = 3 }
+            else { bars = 4 }
+            
+            DispatchQueue.main.async {
+                self.wifiSSID = ssid
+                self.signalBars = bars
+                self.frequencyBand = band
+            }
+        } else {
+            DispatchQueue.main.async {
+                self.wifiSSID = "Network Active"
+                self.signalBars = 4
+                self.frequencyBand = "LAN"
+            }
+        }
+    }
+    
+    func refreshIPs() {
+        var localAddress = "127.0.0.1"
+        var ifaddr: UnsafeMutablePointer<ifaddrs>?
+        if getifaddrs(&ifaddr) == 0 {
+            var ptr = ifaddr
+            while ptr != nil {
+                defer { ptr = ptr?.pointee.ifa_next }
+                guard let interface = ptr?.pointee else { continue }
+                let addrFamily = interface.ifa_addr.pointee.sa_family
+                if addrFamily == UInt8(AF_INET) {
+                    let name = String(cString: interface.ifa_name)
+                    if name.hasPrefix("en") {
+                        var hostname = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+                        getnameinfo(interface.ifa_addr, socklen_t(interface.ifa_addr.pointee.sa_len),
+                                    &hostname, socklen_t(hostname.count),
+                                    nil, socklen_t(0), NI_NUMERICHOST)
+                        localAddress = String(cString: hostname)
+                        break
+                    }
+                }
+            }
+            freeifaddrs(ifaddr)
+        }
+        DispatchQueue.main.async {
+            self.localIP = localAddress
+        }
+        
+        guard !isFetchingPublicIP else { return }
+        isFetchingPublicIP = true
+        guard let url = URL(string: "https://api.ipify.org") else { return }
+        URLSession.shared.dataTask(with: url) { [weak self] data, _, error in
+            DispatchQueue.main.async {
+                self?.isFetchingPublicIP = false
+                if let data = data, let ip = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines), !ip.isEmpty {
+                    self?.publicIP = ip
+                } else if self?.publicIP == "..." {
+                    self?.publicIP = "Unavailable"
+                }
+            }
+        }.resume()
+    }
+    
+    func testPing() {
+        guard let url = URL(string: "https://1.1.1.1") else { return }
+        let start = Date()
+        var request = URLRequest(url: url)
+        request.httpMethod = "HEAD"
+        request.timeoutInterval = 2.0
+        
+        URLSession.shared.dataTask(with: request) { [weak self] _, _, _ in
+            let ms = Int(Date().timeIntervalSince(start) * 1000)
+            DispatchQueue.main.async {
+                self?.pingMs = max(ms, 8)
+            }
+        }.resume()
+    }
+    
+    static func formatSpeed(_ bytesPerSec: Double) -> (value: String, unit: String) {
+        if bytesPerSec >= 1_048_576 {
+            return (String(format: "%.1f", bytesPerSec / 1_048_576), "MB/s")
+        } else if bytesPerSec >= 1024 {
+            return (String(format: "%.0f", bytesPerSec / 1024), "KB/s")
+        } else {
+            return (String(format: "%.0f", bytesPerSec), "B/s")
+        }
+    }
+}
+
+struct NetworkCardView: View {
+    @ObservedObject var viewModel: NotchViewModel
+    @StateObject private var netManager = NetworkSpeedManager.shared
+    @State private var showCopiedLocalIP = false
+    @State private var showCopiedPublicIP = false
+    
+    var body: some View {
+        VStack(spacing: 8) {
+            // Top Row: Speedometers
+            HStack(spacing: 10) {
+                // Download Meter
+                speedMeterCard(
+                    title: LanguageManager.tr("Download"),
+                    icon: "arrow.down.circle.fill",
+                    color: Color.green,
+                    bytesPerSec: netManager.downloadSpeed,
+                    history: netManager.downloadHistory
+                )
+                
+                // Upload Meter
+                speedMeterCard(
+                    title: LanguageManager.tr("Upload"),
+                    icon: "arrow.up.circle.fill",
+                    color: Color.blue,
+                    bytesPerSec: netManager.uploadSpeed,
+                    history: netManager.uploadHistory
+                )
+            }
+            .frame(width: 336)
+            
+            // Middle Row: Wi-Fi, Signal & Ping
+            HStack(spacing: 8) {
+                // Wi-Fi SSID
+                HStack(spacing: 5) {
+                    Image(systemName: netManager.signalIcon)
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(.white)
+                    
+                    Text(netManager.wifiSSID)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(.white)
+                        .lineLimit(1)
+                    
+                    Text(netManager.frequencyBand)
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundColor(.white.opacity(0.7))
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 1)
+                        .background(Capsule().fill(Color.white.opacity(0.12)))
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+                .background(
+                    RoundedRectangle(cornerRadius: 7)
+                        .fill(Color.white.opacity(0.06))
+                        .overlay(RoundedRectangle(cornerRadius: 7).stroke(Color.white.opacity(0.1), lineWidth: 0.5))
+                )
+                
+                Spacer()
+                
+                // Ping Latency Pill
+                HStack(spacing: 4) {
+                    Circle()
+                        .fill(netManager.pingColor)
+                        .frame(width: 6, height: 6)
+                    
+                    Text("\(netManager.pingMs) ms")
+                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                        .foregroundColor(.white)
+                    
+                    Text(LanguageManager.tr("Latency"))
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundColor(.gray)
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+                .background(
+                    RoundedRectangle(cornerRadius: 7)
+                        .fill(Color.white.opacity(0.06))
+                        .overlay(RoundedRectangle(cornerRadius: 7).stroke(Color.white.opacity(0.1), lineWidth: 0.5))
+                )
+                
+                // Refresh Button
+                Button(action: {
+                    netManager.testPing()
+                    netManager.refreshIPs()
+                    netManager.checkWiFi()
+                }) {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundColor(.white.opacity(0.8))
+                        .padding(6)
+                        .background(Circle().fill(Color.white.opacity(0.08)))
+                }
+                .buttonStyle(PlainButtonStyle())
+                .help(LanguageManager.tr("Re-testing network..."))
+            }
+            .frame(width: 336)
+            
+            // Bottom Row: Local & Public IP
+            HStack(spacing: 8) {
+                // Local IP Pill
+                HStack(spacing: 5) {
+                    Text(LanguageManager.tr("Local IP") + ":")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(.gray)
+                    
+                    Text(netManager.localIP)
+                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                        .foregroundColor(.white)
+                        .lineLimit(1)
+                    
+                    Spacer()
+                    
+                    Button(action: {
+                        copyToClipboard(netManager.localIP, isLocal: true)
+                    }) {
+                        Image(systemName: showCopiedLocalIP ? "checkmark" : "doc.on.doc")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundColor(showCopiedLocalIP ? .green : .white.opacity(0.6))
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .help(LanguageManager.tr("IP Copied"))
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+                .frame(maxWidth: .infinity)
+                .background(
+                    RoundedRectangle(cornerRadius: 7)
+                        .fill(Color.white.opacity(0.06))
+                        .overlay(RoundedRectangle(cornerRadius: 7).stroke(Color.white.opacity(0.1), lineWidth: 0.5))
+                )
+                
+                // Public IP Pill
+                HStack(spacing: 5) {
+                    Text(LanguageManager.tr("Public IP") + ":")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(.gray)
+                    
+                    Text(netManager.publicIP)
+                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                        .foregroundColor(.white)
+                        .lineLimit(1)
+                    
+                    Spacer()
+                    
+                    Button(action: {
+                        copyToClipboard(netManager.publicIP, isLocal: false)
+                    }) {
+                        Image(systemName: showCopiedPublicIP ? "checkmark" : "doc.on.doc")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundColor(showCopiedPublicIP ? .green : .white.opacity(0.6))
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .help(LanguageManager.tr("IP Copied"))
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+                .frame(maxWidth: .infinity)
+                .background(
+                    RoundedRectangle(cornerRadius: 7)
+                        .fill(Color.white.opacity(0.06))
+                        .overlay(RoundedRectangle(cornerRadius: 7).stroke(Color.white.opacity(0.1), lineWidth: 0.5))
+                )
+            }
+            .frame(width: 336)
+        }
+        .onAppear {
+            netManager.startMonitoring()
+        }
+        .onDisappear {
+            netManager.stopMonitoring()
+        }
+    }
+    
+    private func speedMeterCard(title: String, icon: String, color: Color, bytesPerSec: Double, history: [CGFloat]) -> some View {
+        let fmt = NetworkSpeedManager.formatSpeed(bytesPerSec)
+        
+        return ZStack(alignment: .bottomTrailing) {
+            // Background mini sparkline wave
+            SparklineView(data: history, color: color.opacity(0.25))
+                .frame(height: 34)
+                .padding(.horizontal, 4)
+                .padding(.bottom, 2)
+            
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 4) {
+                    Image(systemName: icon)
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundColor(color)
+                    Text(title)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(.gray)
+                }
+                
+                HStack(alignment: .firstTextBaseline, spacing: 3) {
+                    Text(fmt.value)
+                        .font(.system(size: 18, weight: .bold, design: .rounded))
+                        .foregroundColor(.white)
+                    Text(fmt.unit)
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundColor(color)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(8)
+        }
+        .frame(maxWidth: .infinity, minHeight: 64)
+        .background(
+            RoundedRectangle(cornerRadius: 9)
+                .fill(Color.white.opacity(0.06))
+                .overlay(RoundedRectangle(cornerRadius: 9).stroke(color.opacity(0.2), lineWidth: 0.5))
+        )
+    }
+    
+    private func copyToClipboard(_ text: String, isLocal: Bool) {
+        let p = NSPasteboard.general
+        p.clearContents()
+        p.setString(text, forType: .string)
+        if isLocal {
+            withAnimation { showCopiedLocalIP = true }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                withAnimation { showCopiedLocalIP = false }
+            }
+        } else {
+            withAnimation { showCopiedPublicIP = true }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                withAnimation { showCopiedPublicIP = false }
+            }
+        }
     }
 }
 
@@ -3109,7 +7333,178 @@ struct LanguageManager {
         "Today": "Hari ini",
         "Tomorrow": "Besok",
         "Upcoming": "Mendatang",
-        "No music playing": "Tidak ada musik dimainkan"
+        "No music playing": "Tidak ada musik dimainkan",
+        "Clipboard is Empty": "Papan Klip Kosong",
+        "Copied text and snippets will appear here": "Teks dan potongan yang disalin akan muncul di sini",
+        "Clear All": "Bersihkan Semua",
+        "Clear": "Bersihkan",
+        "Copied!": "Tersalin!",
+        "Drop Files Here": "Lepas File di Sini",
+        "Quick shelf to drag & drop files anywhere": "Penyimpanan cepat untuk seret & lepas file ke mana saja",
+        "Focus Session": "Sesi Fokus",
+        "Start Focus": "Mulai Fokus",
+        "Pause": "Jeda",
+        "Resume": "Lanjut",
+        "min": "mnt",
+        "Focus": "Fokus",
+        "Break": "Istirahat",
+        "Rest": "Santai",
+        "Remove": "Hapus",
+        "Media & Lyrics": "Media & Lirik",
+        "Search & display music lyrics": "Cari & tampilkan lirik musik",
+        "Fetch synchronized lyrics online when playing music.": "Ambil lirik tersinkronisasi online saat memutar musik.",
+        "Preferred Music Source": "Sumber Musik Utama",
+        "Preferred player to display and control when multiple music sources are active.": "Pilihan pemutar untuk ditampilkan dan dikontrol saat beberapa sumber musik aktif.",
+        "Auto (Detect Any Active App)": "Otomatis (Deteksi Aplikasi Aktif)",
+        "Spotify Desktop": "Spotify Desktop",
+        "Apple Music": "Apple Music",
+        "Browser Web (YouTube Music)": "Browser Web (YouTube Music)",
+        "Open in": "Buka di",
+        "Media Player": "Pemutar Media",
+        "Search clipboard...": "Cari clipboard...",
+        "No matching items": "Tidak ada item yang cocok",
+        "Pin to top": "Sematkan ke atas",
+        "Unpin": "Lepas sematan",
+        "Open in browser": "Buka di browser",
+        "Share or AirDrop": "Bagikan atau AirDrop",
+        "Share All": "Bagikan Semua",
+        "Share": "Bagikan",
+        "Open file": "Buka file",
+        "Delete last digit": "Hapus angka terakhir",
+        "Copy result": "Salin hasil",
+        "Click to copy": "Klik untuk menyalin",
+        "Focus Timer: Click to open": "Timer Fokus: Klik untuk membuka",
+        "Charging": "Mengisi Daya",
+        "Fully Charged": "Daya Penuh",
+        "On Battery": "Daya Baterai",
+        "Battery": "Baterai",
+        "Battery Level": "Tingkat Baterai",
+        "Test Charging Animation": "Uji Animasi Pengisian Daya",
+        "Mirror": "Cermin",
+        "Ring Light": "Lampu Ring",
+        "Cool": "Sejuk",
+        "Neutral": "Netral",
+        "Warm": "Hangat",
+        "Mirrored": "Tampilan Cermin",
+        "Audience View": "Tampilan Nyata",
+        "Freeze": "Bekukan",
+        "Preview Paused": "Pratinjau Dijeda",
+        "Virtual Ring Light: Illuminate face": "Lampu Ring Virtual: Terangi wajah",
+        "Toggle between real mirror and what others see": "Ganti antara cermin dan tampilan orang lain",
+        "Freeze frame to check details": "Bekukan gambar untuk memeriksa detail",
+        "Camera Access Needed": "Izin Kamera Diperlukan",
+        "Notchify needs camera access to show your quick webcam mirror preview.": "Notchify memerlukan izin kamera untuk menampilkan pratinjau cermin webcam cepat.",
+        "Open System Settings": "Buka Pengaturan Sistem",
+        "Camera": "Kamera",
+        "Camera & Photos": "Kamera & Foto",
+        "Photo Storage Location": "Lokasi Simpan Foto",
+        "Default Folder": "Folder Bawaan",
+        "Custom Folder": "Folder Kustom",
+        "Choose Folder...": "Pilih Folder...",
+        "No folder selected": "Belum ada folder dipilih",
+        "Open Folder in Finder": "Buka Folder di Finder",
+        "Shutter Feedback": "Umpan Balik Jepretan",
+        "Play Shutter Sound": "Bunyikan Suara Rana",
+        "Select": "Pilih",
+        "Off": "Mati",
+        "Take Photo": "Ambil Foto",
+        "Saved!": "Tersimpan!",
+        "Show latest photo in Finder": "Tampilkan foto terakhir di Finder",
+        "Open Photos Folder": "Buka Folder Foto",
+        "Timer: 3 seconds delay": "Timer: jeda 3 detik",
+        "Mirrored (Click for True View)": "Cermin (Klik untuk Tampilan Nyata)",
+        "True View (Click for Mirrored)": "Tampilan Nyata (Klik untuk Cermin)",
+        "View latest photo": "Lihat foto terakhir",
+        "Back to Camera": "Kembali ke Kamera",
+        "Copy Image": "Salin Gambar",
+        "Open Folder": "Buka Folder",
+        "Image Copied to Clipboard": "Gambar Disalin ke Clipboard",
+        "No Photo": "Tidak Ada Foto",
+        "Photo": "Foto",
+        "Video": "Video",
+        "Stop Recording": "Berhenti Merekam",
+        "Record Video": "Rekam Video",
+        "Copy Video": "Salin Video",
+        "Video Copied to Clipboard": "File Video Disalin ke Clipboard",
+        "Copy video to clipboard": "Salin file video ke clipboard",
+        "Microphone Muted": "Mikrofon Dimatikan",
+        "Microphone Active": "Mikrofon Aktif",
+        "Duration Template": "Template Durasi",
+        "Video Saved!": "Video Tersimpan!",
+        "View latest media": "Lihat media terakhir",
+        "No Media": "Tidak Ada Media",
+        "REC": "REC",
+        "Smart Dynamic Island & Notch for macOS": "Dynamic Island & Notch Pintar untuk macOS",
+        "Welcome to Notchify": "Selamat Datang di Notchify",
+        "Transform your MacBook Notch into a powerful Dynamic Island": "Ubah Notch MacBook Anda menjadi Dynamic Island yang cerdas & bertenaga",
+        "Continue": "Lanjutkan",
+        "Back": "Kembali",
+        "Essential Permissions": "Izin Sistem Penting",
+        "Notchify needs a few permissions to provide seamless controls. You can grant them now or later in Settings.": "Notchify membutuhkan beberapa izin agar semua fitur berjalan mulus. Anda bisa mengizinkannya sekarang atau nanti di Pengaturan.",
+        "Accessibility Access": "Akses Aksesibilitas",
+        "Required for global shortcut (Cmd+Shift+N) and Notch interaction": "Diperlukan untuk pintasan keyboard (Cmd+Shift+N) dan interaksi Notch",
+        "Camera & Microphone": "Kamera & Mikrofon",
+        "For quick webcam mirror, photo snapshots, and video clips": "Untuk cermin webcam kilat, snapshot foto, dan rekaman klip video",
+        "Music Automation": "Otomatisasi Musik",
+        "To display current song and control Spotify & Apple Music": "Untuk menampilkan lagu yang sedang diputar dan mengontrol Spotify & Apple Music",
+        "Granted": "Diizinkan",
+        "Grant": "Izinkan",
+        "Configure": "Atur",
+        "Personalize Controls": "Personalisasi Kontrol",
+        "Choose how you'd like to interact with Notchify.": "Pilih bagaimana Anda ingin berinteraksi dengan Notchify.",
+        "Hover to Expand": "Arahkan Kursor (Hover)",
+        "Move your cursor near the Notch to smoothly expand": "Gerakkan kursor mendekati Notch untuk membuka",
+        "Click to Expand": "Klik Langsung (Click)",
+        "Only expands when you click or tap on the Notch": "Hanya terbuka saat Anda mengeklik Notch",
+        "Global Shortcut": "Pintasan Global",
+        "Press anytime to toggle Notchify from anywhere": "Tekan kapan saja untuk membuka/menutup Notchify dari mana saja",
+        "You're All Set!": "Semua Sudah Siap!",
+        "Notchify is now ready to assist your daily workflow.": "Notchify kini siap menemani produktivitas harian Anda.",
+        "Launch automatically at startup (Launch at Login)": "Buka otomatis saat Mac menyala (Launch at Login)",
+        "Start Using Notchify": "Mulai Gunakan Notchify",
+        "Show Onboarding Tour": "Tampilkan Panduan Onboarding",
+        "Onboarding Tour...": "Panduan Onboarding...",
+        "Onboarding Tour": "Panduan Onboarding",
+        "Revisit the setup guide and feature overview.": "Buka kembali panduan pengaturan awal dan ringkasan fitur.",
+        "Media & Real-time Lyrics": "Pemutar Media & Lirik Real-time",
+        "Webcam Mirror & Quick Video": "Webcam Cermin & Video Cepat",
+        "Drop Zone File Shelf": "Shelf File & Drop Zone",
+        "Smart Clipboard History": "Riwayat Clipboard Cerdas",
+        "Control Spotify, Apple Music & Web Player with lyrics": "Kontrol Spotify, Apple Music & Web Player lengkap dengan lirik",
+        "Check face, take instant photos & video clips before meetings": "Cek wajah, foto asli & video kilat 5 detik sebelum rapat",
+        "Pin important snippets & search clipboard history": "Sematkan teks penting & cari riwayat salinan teks",
+        "Clipboard Manager": "Manajer Clipboard",
+        "Pomodoro Timer": "Timer Pomodoro",
+        "Notchify Features": "Fitur Notchify",
+        "Pinned Tabs": "Tab Disematkan",
+        "Pinned (Max 6)": "Disematkan (Maks 6)",
+        "Pin to bar": "Sematkan ke bilah",
+        "Unpin from bar": "Lepas dari bilah",
+        "Max 6 tabs reached": "Batas 6 tab tercapai",
+        "All Features & Pinning": "Semua Fitur & Penyematan",
+        "Previous Tab": "Tab Sebelumnya",
+        "Next Tab": "Tab Berikutnya",
+        "Scratchpad & Tasks": "Catatan & Tugas",
+        "Network Radar": "Pemantau Jaringan",
+        "Notes": "Catatan",
+        "To-Do": "To-Do",
+        "Type notes or paste snippets...": "Ketik catatan atau tempel teks di sini...",
+        "Characters": "Karakter",
+        "Words": "Kata",
+        "Copy All": "Salin Semua",
+        "Notes Copied": "Catatan Disalin",
+        "Export to Notes": "Ekspor ke Notes",
+        "Add a task...": "Tambah tugas baru...",
+        "No tasks yet": "Belum ada tugas",
+        "completed": "selesai",
+        "Clear Completed": "Hapus Selesai",
+        "Download": "Unduh",
+        "Upload": "Unggah",
+        "Local IP": "IP Lokal",
+        "Public IP": "IP Publik",
+        "Latency": "Latensi",
+        "Re-testing network...": "Menguji ulang jaringan...",
+        "IP Copied": "IP Disalin"
     ]
     
     static func tr(_ key: String) -> String {
@@ -3149,147 +7544,12 @@ struct PrivacyIndicatorView: View {
         .padding(.top, 0)
     }
 }
-import SwiftUI
-import AppKit
-
-class NotchViewModel: ObservableObject {
-    @Published var isExpanded: Bool = false
-    @Published var clipboardItems: [String] = []
-    
-    // For media info (dummy data for now)
-    @Published var currentSong: String = "AirPods Pro"
-    @Published var currentArtist: String = "L 80%   R 78%   Case 100%"
-    
-    private var clipboardTimer: Timer?
-    private let pasteboard = NSPasteboard.general
-    private var lastChangeCount: Int = 0
-    
-    init() {
-        startClipboardPolling()
-    }
-    
-    func startClipboardPolling() {
-        lastChangeCount = pasteboard.changeCount
-        clipboardTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-            self?.checkClipboard()
-        }
-    }
-    
-    private func checkClipboard() {
-        guard pasteboard.changeCount != lastChangeCount else { return }
-        lastChangeCount = pasteboard.changeCount
-        
-        if let string = pasteboard.string(forType: .string) {
-            DispatchQueue.main.async {
-                // Avoid duplicates at the top
-                if self.clipboardItems.first != string {
-                    self.clipboardItems.insert(string, at: 0)
-                    if self.clipboardItems.count > 3 {
-                        self.clipboardItems.removeLast()
-                    }
-                }
-            }
-        }
-    }
-}
-import Foundation
-import CoreMediaIO
-import CoreAudio
-import Combine
-
-import Foundation
-import CoreMediaIO
-import CoreAudio
-import Combine
 
 class PrivacyMonitor: ObservableObject {
     @Published var isCameraActive: Bool = false
     @Published var isMicActive: Bool = false
     
     static let shared = PrivacyMonitor()
-    private var timer: Timer?
-    
-    init() {
-        startMonitoring()
-    }
-    
-    func startMonitoring() {
-        timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-            self?.checkStatus()
-        }
-        RunLoop.main.add(timer!, forMode: .common)
-    }
-    
-    func stopMonitoring() {
-        timer?.invalidate()
-        timer = nil
-    }
-    
-    private func checkStatus() {
-        let camStatus = checkCamera()
-        let micStatus = checkMic()
-        
-        DispatchQueue.main.async {
-            if self.isCameraActive != camStatus {
-                self.isCameraActive = camStatus
-            }
-            if self.isMicActive != micStatus {
-                self.isMicActive = micStatus
-            }
-        }
-    }
-    
-    private func checkCamera() -> Bool {
-        var opa = CMIOObjectPropertyAddress(
-            mSelector: CMIOObjectPropertySelector(kCMIOHardwarePropertyDevices),
-            mScope: CMIOObjectPropertyScope(kCMIOObjectPropertyScopeGlobal),
-            mElement: CMIOObjectPropertyElement(kCMIOObjectPropertyElementMain)
-        )
-        var dataSize: UInt32 = 0
-        var dataUsed: UInt32 = 0
-        guard CMIOObjectGetPropertyDataSize(CMIOObjectID(kCMIOObjectSystemObject), &opa, 0, nil, &dataSize) == 0 else { return false }
-        
-        let deviceCount = Int(dataSize) / MemoryLayout<CMIODeviceID>.size
-        var devices = [CMIODeviceID](repeating: 0, count: deviceCount)
-        guard CMIOObjectGetPropertyData(CMIOObjectID(kCMIOObjectSystemObject), &opa, 0, nil, dataSize, &dataUsed, &devices) == 0 else { return false }
-        
-        for device in devices {
-            var runningOpa = CMIOObjectPropertyAddress(
-                mSelector: CMIOObjectPropertySelector(kCMIODevicePropertyDeviceIsRunningSomewhere),
-                mScope: CMIOObjectPropertyScope(kCMIOObjectPropertyScopeWildcard),
-                mElement: CMIOObjectPropertyElement(kCMIOObjectPropertyElementWildcard)
-            )
-            var isRunning: UInt32 = 0
-            var size = UInt32(MemoryLayout<UInt32>.size)
-            if CMIOObjectGetPropertyData(device, &runningOpa, 0, nil, size, &dataUsed, &isRunning) == 0 {
-                if isRunning == 1 { return true }
-            }
-        }
-        return false
-    }
-    
-    private func checkMic() -> Bool {
-        var opa = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDefaultInputDevice,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        var deviceID = kAudioObjectUnknown
-        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
-        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &opa, 0, nil, &size, &deviceID) == 0 else { return false }
-        
-        if deviceID != kAudioObjectUnknown {
-            var runningOpa = AudioObjectPropertyAddress(
-                mSelector: kAudioDevicePropertyDeviceIsRunningSomewhere,
-                mScope: kAudioObjectPropertyScopeWildcard,
-                mElement: kAudioObjectPropertyElementWildcard
-            )
-            var isRunning: UInt32 = 0
-            var rSize = UInt32(MemoryLayout<UInt32>.size)
-            if AudioObjectGetPropertyData(deviceID, &runningOpa, 0, nil, &rSize, &isRunning) == 0 {
-                return isRunning != 0
-            }
-        }
-        return false
-    }
+    func toggleCamera() { isCameraActive.toggle() }
+    func toggleMic() { isMicActive.toggle() }
 }
