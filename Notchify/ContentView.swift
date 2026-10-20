@@ -2829,6 +2829,118 @@ struct CompactMediaView: View {
     }
 }
 
+// MARK: - Compact Pomodoro View (Main Notch Island)
+struct CompactPomodoroView: View {
+    @ObservedObject var viewModel: NotchViewModel
+    
+    private var progress: CGFloat {
+        guard viewModel.pomodoroTotal > 0 else { return 0 }
+        return CGFloat(viewModel.pomodoroRemaining / viewModel.pomodoroTotal)
+    }
+    
+    private var sessionLabel: String {
+        let totalMinutes = Int(round(viewModel.pomodoroTotal / 60))
+        if totalMinutes == 25 {
+            return LanguageManager.tr("Focus")
+        } else if totalMinutes == 15 {
+            return LanguageManager.tr("Rest")
+        } else if totalMinutes == 5 {
+            return LanguageManager.tr("Break")
+        } else {
+            return LanguageManager.tr("Custom")
+        }
+    }
+    
+    private var sessionIcon: String {
+        let totalMinutes = Int(round(viewModel.pomodoroTotal / 60))
+        if totalMinutes == 25 {
+            return "brain.head.profile"
+        } else if totalMinutes == 15 {
+            return "leaf.fill"
+        } else if totalMinutes == 5 {
+            return "cup.and.saucer.fill"
+        } else {
+            return "slider.horizontal.3"
+        }
+    }
+    
+    var body: some View {
+        HStack(spacing: 8) {
+            // 1. Progress Bar Lingkaran
+            ZStack {
+                Circle()
+                    .stroke(Color.white.opacity(0.18), lineWidth: 2.5)
+                    .frame(width: 18, height: 18)
+                
+                Circle()
+                    .trim(from: 0, to: progress)
+                    .stroke(
+                        LinearGradient(
+                            colors: viewModel.isPomodoroPaused ? [.yellow, .orange] : [.orange, .yellow],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        style: StrokeStyle(lineWidth: 2.5, lineCap: .round)
+                    )
+                    .frame(width: 18, height: 18)
+                    .rotationEffect(.degrees(-90))
+                    .animation(.linear(duration: 0.5), value: viewModel.pomodoroRemaining)
+                
+                Circle()
+                    .fill(viewModel.isPomodoroPaused ? Color.yellow : Color.orange)
+                    .frame(width: 4, height: 4)
+            }
+            
+            // 2. Angka Timer
+            Text(timeString(from: viewModel.pomodoroRemaining))
+                .font(.system(size: 13, weight: .bold, design: .monospaced))
+                .foregroundColor(viewModel.isPomodoroPaused ? .yellow : .white)
+            
+            // 3. Jenis Waktu Template Badge
+            HStack(spacing: 4) {
+                Image(systemName: sessionIcon)
+                    .font(.system(size: 8, weight: .bold))
+                Text(sessionLabel)
+                    .font(.system(size: 10, weight: .bold, design: .rounded))
+            }
+            .foregroundColor(viewModel.isPomodoroPaused ? .yellow : .orange)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(
+                Capsule()
+                    .fill((viewModel.isPomodoroPaused ? Color.yellow : Color.orange).opacity(0.15))
+                    .overlay(
+                        Capsule()
+                            .stroke((viewModel.isPomodoroPaused ? Color.yellow : Color.orange).opacity(0.3), lineWidth: 0.5)
+                    )
+            )
+        }
+        .padding(.horizontal, 16)
+        .frame(height: 34)
+        .contextMenu {
+            Button(viewModel.isPomodoroPaused ? LanguageManager.tr("Resume") : LanguageManager.tr("Pause")) {
+                if viewModel.isPomodoroPaused {
+                    viewModel.resumePomodoro()
+                } else {
+                    viewModel.pausePomodoro()
+                }
+            }
+            Divider()
+            Button(LanguageManager.tr("Stop")) {
+                withAnimation {
+                    viewModel.stopPomodoro()
+                }
+            }
+        }
+    }
+    
+    private func timeString(from time: TimeInterval) -> String {
+        let min = Int(time) / 60
+        let sec = Int(time) % 60
+        return String(format: "%02d:%02d", min, sec)
+    }
+}
+
 // MARK: - Blossom Animations
 struct DropFileBlossomView: View {
     @State private var rotation: Double = 0
@@ -3289,6 +3401,8 @@ struct ContentView: View {
     @State private var previousApp: NSRunningApplication?
     @State private var blossomHeight: CGFloat = 0
     @State private var isHiddenByFullscreen: Bool = false
+    @State private var isPomodoroInMainIsland: Bool = false
+    @State private var pauseGraceTimer: Timer? = nil
     
     private var currentWidth: CGFloat {
         if viewModel.isExpanded { return expandedWidth }
@@ -3299,6 +3413,7 @@ struct ContentView: View {
         if viewModel.showVolumeHUD { return 160 }
         if viewModel.isHoveringWithFile { return 255 }
         if viewModel.showDropSuccessHUD { return 220 }
+        if viewModel.isPomodoroActive && isPomodoroInMainIsland { return mediaWidth }
         return viewModel.showClock ? clockWidth : mediaWidth
     }
 
@@ -3333,6 +3448,58 @@ struct ContentView: View {
     
     private var isBlossoming: Bool {
         viewModel.showBatteryHUD || viewModel.showClipboardHUD || viewModel.showTimesUp || viewModel.showDeviceHUD || viewModel.showVolumeHUD || viewModel.showAgendaHUD || viewModel.isHoveringWithFile || viewModel.showDropSuccessHUD
+    }
+    
+    private func updatePomodoroPlacement(isPlaying: Bool, isPomodoroActive: Bool, animated: Bool = true) {
+        guard isPomodoroActive else {
+            pauseGraceTimer?.invalidate()
+            pauseGraceTimer = nil
+            if animated {
+                withAnimation(.spring(response: 0.45, dampingFraction: 0.72)) {
+                    isPomodoroInMainIsland = false
+                }
+            } else {
+                isPomodoroInMainIsland = false
+            }
+            return
+        }
+        
+        if isPlaying {
+            // Media is playing: timer must detach to the right side island
+            pauseGraceTimer?.invalidate()
+            pauseGraceTimer = nil
+            if animated {
+                withAnimation(.spring(response: 0.45, dampingFraction: 0.72)) {
+                    isPomodoroInMainIsland = false
+                }
+            } else {
+                isPomodoroInMainIsland = false
+            }
+        } else {
+            // Media is NOT playing
+            if viewModel.currentSong.isEmpty || viewModel.currentSong == "No Media Playing" {
+                // No media at all: immediately place timer in main island
+                pauseGraceTimer?.invalidate()
+                pauseGraceTimer = nil
+                if animated {
+                    withAnimation(.spring(response: 0.45, dampingFraction: 0.72)) {
+                        isPomodoroInMainIsland = true
+                    }
+                } else {
+                    isPomodoroInMainIsland = true
+                }
+            } else {
+                // Media was playing but is currently paused: wait 10 seconds before moving into main island
+                if !isPomodoroInMainIsland && pauseGraceTimer == nil {
+                    pauseGraceTimer = Timer.scheduledTimer(withTimeInterval: 10.0, repeats: false) { _ in
+                        withAnimation(.spring(response: 0.45, dampingFraction: 0.72)) {
+                            self.isPomodoroInMainIsland = true
+                        }
+                        self.pauseGraceTimer = nil
+                    }
+                }
+            }
+        }
     }
     
     var body: some View {
@@ -3592,6 +3759,9 @@ struct ContentView: View {
                             } else if viewModel.showAgendaHUD {
                                 AgendaBlossomView(message: viewModel.agendaHUDMessage)
                                     .transition(.opacity.combined(with: .scale(scale: 0.8)))
+                            } else if viewModel.isPomodoroActive && isPomodoroInMainIsland {
+                                CompactPomodoroView(viewModel: viewModel)
+                                    .transition(.opacity.combined(with: .scale(scale: 0.85)))
                             } else if viewModel.showClock {
                                 CompactClockView()
                                     .transition(.opacity.combined(with: .scale(scale: 0.8)))
@@ -3614,6 +3784,9 @@ struct ContentView: View {
                                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
                                     guard !viewModel.isHoveringWithFile else { return }
                                     guard !viewModel.showDropSuccessHUD else { return }
+                                    if viewModel.isPomodoroActive && isPomodoroInMainIsland {
+                                        viewModel.selectedTab = .pomodoro
+                                    }
                                     withAnimation(.spring(response: 0.38, dampingFraction: 0.72)) {
                                         viewModel.isExpanded = true
                                     }
@@ -3691,11 +3864,15 @@ struct ContentView: View {
             .animation(.interactiveSpring(response: 0.5, dampingFraction: 0.55, blendDuration: 0), value: viewModel.showAgendaHUD)
             .animation(.interactiveSpring(response: 0.4, dampingFraction: 0.65, blendDuration: 0), value: viewModel.selectedTab)
             .animation(.interactiveSpring(response: 0.45, dampingFraction: 0.6, blendDuration: 0), value: viewModel.lyrics.isEmpty)
+            .animation(.interactiveSpring(response: 0.5, dampingFraction: 0.55, blendDuration: 0), value: isPomodoroInMainIsland)
             .offset(y: isHiddenByFullscreen ? -80 : 0)
             .opacity(isHiddenByFullscreen ? 0 : notchOpacity)
             .animation(.interactiveSpring(response: 0.5, dampingFraction: 0.7, blendDuration: 0), value: isHiddenByFullscreen)
             .onTapGesture {
                 if expandTrigger == "click" && !viewModel.isExpanded {
+                    if viewModel.isPomodoroActive && isPomodoroInMainIsland {
+                        viewModel.selectedTab = .pomodoro
+                    }
                     withAnimation(.spring(response: 0.38, dampingFraction: 0.72)) {
                         viewModel.isExpanded = true
                     }
@@ -3707,6 +3884,9 @@ struct ContentView: View {
                 }
             }
             .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("ToggleNotchify"))) { _ in
+                if !viewModel.isExpanded && viewModel.isPomodoroActive && isPomodoroInMainIsland {
+                    viewModel.selectedTab = .pomodoro
+                }
                 withAnimation(.spring(response: 0.38, dampingFraction: 0.72)) {
                     viewModel.isExpanded.toggle()
                 }
@@ -3778,6 +3958,15 @@ struct ContentView: View {
                         }
                     }
                 }
+            }
+            .onChange(of: viewModel.isPlaying) { playing in
+                updatePomodoroPlacement(isPlaying: playing, isPomodoroActive: viewModel.isPomodoroActive)
+            }
+            .onChange(of: viewModel.isPomodoroActive) { active in
+                updatePomodoroPlacement(isPlaying: viewModel.isPlaying, isPomodoroActive: active)
+            }
+            .onChange(of: viewModel.currentSong) { _ in
+                updatePomodoroPlacement(isPlaying: viewModel.isPlaying, isPomodoroActive: viewModel.isPomodoroActive)
             } // End of Main Notch ZStack
             
             // Left Privacy Indicator (Camera & Microphone Island) - Repels outward on blossom & expansion
@@ -3795,15 +3984,16 @@ struct ContentView: View {
                     .opacity(isHiddenByFullscreen ? 0 : notchOpacity)
             }
             
-            // Right Detached Pomodoro Timer Island - Repels outward on blossom
-            if viewModel.isPomodoroActive && !viewModel.isExpanded && !viewModel.showTimesUp {
+            // Right Detached Pomodoro Timer Island - Repels outward on blossom & absorbs into main island
+            if viewModel.isPomodoroActive && !viewModel.isExpanded && !viewModel.showTimesUp && !isPomodoroInMainIsland {
                 DetachedPomodoroView(viewModel: viewModel)
                     .offset(x: (currentWidth / 2) + 12 + 42, y: 0)
                     .transition(.asymmetric(
                         insertion: .move(edge: .leading).combined(with: .scale(scale: 0.8)).combined(with: .opacity),
-                        removal: .move(edge: .leading).combined(with: .scale(scale: 0.8)).combined(with: .opacity)
+                        removal: .move(edge: .leading).combined(with: .scale(scale: 0.5)).combined(with: .opacity)
                     ))
                     .animation(.interactiveSpring(response: 0.5, dampingFraction: 0.55, blendDuration: 0), value: currentWidth)
+                    .animation(.spring(response: 0.45, dampingFraction: 0.72), value: isPomodoroInMainIsland)
                     .animation(.spring(response: 0.4, dampingFraction: 0.65), value: viewModel.isPomodoroActive)
                     .offset(y: isHiddenByFullscreen ? -80 : 0)
                     .opacity(isHiddenByFullscreen ? 0 : notchOpacity)
@@ -3814,6 +4004,7 @@ struct ContentView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .onAppear {
             checkFullscreen()
+            updatePomodoroPlacement(isPlaying: viewModel.isPlaying, isPomodoroActive: viewModel.isPomodoroActive, animated: false)
         }
         .onReceive(NotificationCenter.default.publisher(for: NSWorkspace.activeSpaceDidChangeNotification)) { _ in
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
