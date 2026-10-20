@@ -3182,19 +3182,8 @@ struct ContentView: View {
     var body: some View {
         VStack(spacing: 0) {
             ZStack(alignment: .top) {
-                // The Main Notch Assembly
-                HStack(alignment: .top, spacing: 10) {
-                    if PrivacyMonitor.shared.isCameraActive || PrivacyMonitor.shared.isMicActive {
-                        PrivacyIndicatorView()
-                            .transition(.asymmetric(
-                                insertion: .move(edge: .trailing).combined(with: .scale).combined(with: .opacity),
-                                removal: .move(edge: .trailing).combined(with: .scale).combined(with: .opacity)
-                            ))
-                            .animation(.interactiveSpring(response: 0.5, dampingFraction: 0.6), value: PrivacyMonitor.shared.isCameraActive)
-                            .animation(.interactiveSpring(response: 0.5, dampingFraction: 0.6), value: PrivacyMonitor.shared.isMicActive)
-                    }
-                    
-                    ZStack(alignment: .top) {
+                // The Main Notch Assembly (Always centered at x = 0)
+                ZStack(alignment: .top) {
                     NotchShape(cornerRadius: viewModel.isExpanded ? 22 : (isBlossoming ? 18 : 12), flareRadius: 16)
                         .fill(Color.black)
                         .overlay(
@@ -3633,19 +3622,35 @@ struct ContentView: View {
                         }
                     }
                 }
-            }
-            } // End of inner ZStack
+            } // End of Main Notch ZStack
             
-            // Detached Pomodoro Timer Island
+            // Left Privacy Indicator (Camera & Microphone Island) - Repels outward on blossom & expansion
+            if PrivacyMonitor.shared.isCameraActive || PrivacyMonitor.shared.isMicActive {
+                PrivacyIndicatorView()
+                    .offset(x: -(currentWidth / 2) - 12 - 16, y: 0)
+                    .transition(.asymmetric(
+                        insertion: .move(edge: .trailing).combined(with: .scale(scale: 0.8)).combined(with: .opacity),
+                        removal: .move(edge: .trailing).combined(with: .scale(scale: 0.8)).combined(with: .opacity)
+                    ))
+                    .animation(.interactiveSpring(response: 0.5, dampingFraction: 0.55, blendDuration: 0), value: currentWidth)
+                    .animation(.interactiveSpring(response: 0.5, dampingFraction: 0.6), value: PrivacyMonitor.shared.isCameraActive)
+                    .animation(.interactiveSpring(response: 0.5, dampingFraction: 0.6), value: PrivacyMonitor.shared.isMicActive)
+                    .offset(y: isHiddenByFullscreen ? -80 : 0)
+                    .opacity(isHiddenByFullscreen ? 0 : notchOpacity)
+            }
+            
+            // Right Detached Pomodoro Timer Island - Repels outward on blossom
             if viewModel.isPomodoroActive && !viewModel.isExpanded && !viewModel.showTimesUp {
                 DetachedPomodoroView(viewModel: viewModel)
-                    .offset(x: ((viewModel.showClock ? clockWidth : mediaWidth) / 2) + 12 + 42, y: 0)
+                    .offset(x: (currentWidth / 2) + 12 + 42, y: 0)
                     .transition(.asymmetric(
                         insertion: .move(edge: .leading).combined(with: .scale(scale: 0.8)).combined(with: .opacity),
                         removal: .move(edge: .leading).combined(with: .scale(scale: 0.8)).combined(with: .opacity)
                     ))
-                    .animation(.spring(response: 0.4, dampingFraction: 0.65), value: viewModel.showClock)
+                    .animation(.interactiveSpring(response: 0.5, dampingFraction: 0.55, blendDuration: 0), value: currentWidth)
                     .animation(.spring(response: 0.4, dampingFraction: 0.65), value: viewModel.isPomodoroActive)
+                    .offset(y: isHiddenByFullscreen ? -80 : 0)
+                    .opacity(isHiddenByFullscreen ? 0 : notchOpacity)
             }
         } // End of outer ZStack
         Spacer()
@@ -5622,6 +5627,7 @@ class CameraMirrorManager: NSObject, ObservableObject, AVCapturePhotoCaptureDele
             self.session.startRunning()
             DispatchQueue.main.async {
                 self.isRunning = self.session.isRunning
+                PrivacyMonitor.shared.isCameraActive = self.session.isRunning
             }
         }
     }
@@ -5637,6 +5643,8 @@ class CameraMirrorManager: NSObject, ObservableObject, AVCapturePhotoCaptureDele
             self.session.stopRunning()
             DispatchQueue.main.async {
                 self.isRunning = false
+                PrivacyMonitor.shared.isCameraActive = false
+                PrivacyMonitor.shared.isMicActive = false
             }
         }
     }
@@ -5840,6 +5848,7 @@ class CameraMirrorManager: NSObject, ObservableObject, AVCapturePhotoCaptureDele
         
         isRecordingVideo = true
         recordingElapsedSeconds = 0
+        PrivacyMonitor.shared.isMicActive = !self.isMicMuted
         
         NSSound(named: "Tink")?.play()
         
@@ -5867,6 +5876,7 @@ class CameraMirrorManager: NSObject, ObservableObject, AVCapturePhotoCaptureDele
     func fileOutput(_ output: AVCaptureFileOutput, didFinishRecordingTo outputFileURL: URL, from connections: [AVCaptureConnection], error: Error?) {
         DispatchQueue.main.async {
             self.isRecordingVideo = false
+            PrivacyMonitor.shared.isMicActive = false
             self.recordingTimer?.invalidate()
             self.recordingTimer = nil
             
@@ -8322,6 +8332,10 @@ struct LanguageManager {
         "Temporary Shelf": "Rak Berkas Sementara",
         "File Stashed!": "File Tersimpan!",
         "Files Stashed!": "File Tersimpan!",
+        "Camera in use": "Kamera sedang aktif",
+        "Microphone in use": "Mikrofon sedang aktif",
+        "Toggle Camera Indicator": "Uji Indikator Kamera",
+        "Toggle Mic Indicator": "Uji Indikator Mikrofon",
         "Copied to Clipboard": "Disalin ke Clipboard",
         "Cut to Clipboard": "Terpotong",
         "File Copied": "File Tersalin",
@@ -8555,28 +8569,45 @@ struct PrivacyIndicatorView: View {
     @State private var isBlinking = false
     
     var body: some View {
-        ZStack {
-            // Background Island
-            Capsule()
-                .fill(Color.black)
-                .frame(width: 32, height: 32)
-                .overlay(
-                    Capsule()
-                        .stroke(Color.white.opacity(0.08), lineWidth: 0.5)
-                )
-            
-            // Dot
-            Circle()
-                .fill(privacy.isCameraActive ? Color.green : Color.orange)
-                .frame(width: 8, height: 8)
-                .opacity(isBlinking ? 0.3 : 1.0)
-                .animation(.easeInOut(duration: 1.0).repeatForever(), value: isBlinking)
-                .onAppear {
-                    isBlinking = true
-                }
+        Button(action: {
+            withAnimation {
+                privacy.toggleCamera()
+            }
+        }) {
+            ZStack {
+                // Background Island
+                Capsule()
+                    .fill(Color.black)
+                    .frame(width: 32, height: 32)
+                    .overlay(
+                        Capsule()
+                            .stroke(Color.white.opacity(0.08), lineWidth: 0.5)
+                    )
+                    .shadow(color: Color.black.opacity(0.35), radius: 6, x: 0, y: 2)
+                
+                // Dot
+                Circle()
+                    .fill(privacy.isCameraActive ? Color.green : Color.orange)
+                    .frame(width: 8, height: 8)
+                    .opacity(isBlinking ? 0.3 : 1.0)
+                    .animation(.easeInOut(duration: 1.0).repeatForever(), value: isBlinking)
+                    .onAppear {
+                        isBlinking = true
+                    }
+            }
+            .frame(height: 34, alignment: .top) // Align with compact height
+            .padding(.top, 0)
         }
-        .frame(height: 34, alignment: .top) // Align with compact height
-        .padding(.top, 0)
+        .buttonStyle(PlainButtonStyle())
+        .help(privacy.isCameraActive ? LanguageManager.tr("Camera in use") : LanguageManager.tr("Microphone in use"))
+        .contextMenu {
+            Button(LanguageManager.tr("Toggle Camera Indicator")) {
+                withAnimation { privacy.toggleCamera() }
+            }
+            Button(LanguageManager.tr("Toggle Mic Indicator")) {
+                withAnimation { privacy.toggleMic() }
+            }
+        }
     }
 }
 
