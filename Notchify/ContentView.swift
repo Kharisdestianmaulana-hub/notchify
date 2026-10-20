@@ -6,6 +6,8 @@ import AVKit
 import CoreWLAN
 import Network
 import SystemConfiguration
+import CoreMediaIO
+import CoreAudio
 
 // MARK: - Models
 enum NotchTab: String, CaseIterable, Identifiable, Codable {
@@ -3319,6 +3321,7 @@ struct TabPickerPopoverView: View {
 // MARK: - Notch Container View
 struct ContentView: View {
     @StateObject private var viewModel = NotchViewModel()
+    @ObservedObject private var privacy = PrivacyMonitor.shared
     
     @AppStorage("enableGlow") private var enableGlow = false
     @AppStorage("enableLyrics") private var enableLyrics = false
@@ -3970,16 +3973,16 @@ struct ContentView: View {
             } // End of Main Notch ZStack
             
             // Left Privacy Indicator (Camera & Microphone Island) - Repels outward on blossom & expansion
-            if PrivacyMonitor.shared.isCameraActive || PrivacyMonitor.shared.isMicActive {
+            if privacy.isCameraActive || privacy.isMicActive {
                 PrivacyIndicatorView()
-                    .offset(x: -(currentWidth / 2) - 12 - 16, y: 0)
+                    .offset(x: -(currentWidth / 2) - 12 - (privacy.isCameraActive && privacy.isMicActive ? 22 : 16), y: 0)
                     .transition(.asymmetric(
                         insertion: .move(edge: .trailing).combined(with: .scale(scale: 0.8)).combined(with: .opacity),
                         removal: .move(edge: .trailing).combined(with: .scale(scale: 0.8)).combined(with: .opacity)
                     ))
                     .animation(.interactiveSpring(response: 0.5, dampingFraction: 0.55, blendDuration: 0), value: currentWidth)
-                    .animation(.interactiveSpring(response: 0.5, dampingFraction: 0.6), value: PrivacyMonitor.shared.isCameraActive)
-                    .animation(.interactiveSpring(response: 0.5, dampingFraction: 0.6), value: PrivacyMonitor.shared.isMicActive)
+                    .animation(.interactiveSpring(response: 0.5, dampingFraction: 0.6), value: privacy.isCameraActive)
+                    .animation(.interactiveSpring(response: 0.5, dampingFraction: 0.6), value: privacy.isMicActive)
                     .offset(y: isHiddenByFullscreen ? -80 : 0)
                     .opacity(isHiddenByFullscreen ? 0 : notchOpacity)
             }
@@ -8681,6 +8684,7 @@ struct LanguageManager {
         "Files Stashed!": "File Tersimpan!",
         "Camera in use": "Kamera sedang aktif",
         "Microphone in use": "Mikrofon sedang aktif",
+        "Camera & Microphone in use": "Kamera & Mikrofon sedang aktif",
         "Toggle Camera Indicator": "Uji Indikator Kamera",
         "Toggle Mic Indicator": "Uji Indikator Mikrofon",
         "Copied to Clipboard": "Disalin ke Clipboard",
@@ -8932,28 +8936,38 @@ struct PrivacyIndicatorView: View {
                 // Background Island
                 Capsule()
                     .fill(Color.black)
-                    .frame(width: 32, height: 32)
+                    .frame(width: (privacy.isCameraActive && privacy.isMicActive) ? 44 : 32, height: 32)
                     .overlay(
                         Capsule()
                             .stroke(Color.white.opacity(0.08), lineWidth: 0.5)
                     )
                     .shadow(color: Color.black.opacity(0.35), radius: 6, x: 0, y: 2)
                 
-                // Dot
-                Circle()
-                    .fill(privacy.isCameraActive ? Color.green : Color.orange)
-                    .frame(width: 8, height: 8)
-                    .opacity(isBlinking ? 0.3 : 1.0)
-                    .animation(.easeInOut(duration: 1.0).repeatForever(), value: isBlinking)
-                    .onAppear {
-                        isBlinking = true
+                // Indicator Dots
+                HStack(spacing: 5) {
+                    if privacy.isCameraActive {
+                        Circle()
+                            .fill(Color.green)
+                            .frame(width: 8, height: 8)
+                            .opacity(isBlinking ? 0.35 : 1.0)
                     }
+                    if privacy.isMicActive {
+                        Circle()
+                            .fill(Color.orange)
+                            .frame(width: 8, height: 8)
+                            .opacity(isBlinking ? 0.35 : 1.0)
+                    }
+                }
+                .animation(.easeInOut(duration: 1.0).repeatForever(), value: isBlinking)
+                .onAppear {
+                    isBlinking = true
+                }
             }
             .frame(height: 34, alignment: .top) // Align with compact height
             .padding(.top, 0)
         }
         .buttonStyle(PlainButtonStyle())
-        .help(privacy.isCameraActive ? LanguageManager.tr("Camera in use") : LanguageManager.tr("Microphone in use"))
+        .help(tooltipText)
         .contextMenu {
             Button(LanguageManager.tr("Toggle Camera Indicator")) {
                 withAnimation { privacy.toggleCamera() }
@@ -8963,13 +8977,243 @@ struct PrivacyIndicatorView: View {
             }
         }
     }
+    
+    private var tooltipText: String {
+        if privacy.isCameraActive && privacy.isMicActive {
+            return LanguageManager.tr("Camera & Microphone in use")
+        } else if privacy.isCameraActive {
+            return LanguageManager.tr("Camera in use")
+        } else {
+            return LanguageManager.tr("Microphone in use")
+        }
+    }
 }
 
 class PrivacyMonitor: ObservableObject {
+    static let shared = PrivacyMonitor()
+    
     @Published var isCameraActive: Bool = false
     @Published var isMicActive: Bool = false
     
-    static let shared = PrivacyMonitor()
-    func toggleCamera() { isCameraActive.toggle() }
-    func toggleMic() {   isMicActive.toggle() }
+    private var manualCameraOverride: Bool? = nil
+    private var manualMicOverride: Bool? = nil
+    private var monitorTimer: Timer?
+    
+    init() {
+        startMonitoring()
+    }
+    
+    func startMonitoring() {
+        checkDevices()
+        setupAudioListener()
+        
+        monitorTimer?.invalidate()
+        monitorTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            self?.checkDevices()
+        }
+    }
+    
+    func stopMonitoring() {
+        monitorTimer?.invalidate()
+        monitorTimer = nil
+    }
+    
+    func toggleCamera() {
+        if let current = manualCameraOverride {
+            manualCameraOverride = !current
+        } else {
+            manualCameraOverride = !isCameraActive
+        }
+        checkDevices()
+    }
+    
+    func toggleMic() {
+        if let current = manualMicOverride {
+            manualMicOverride = !current
+        } else {
+            manualMicOverride = !isMicActive
+        }
+        checkDevices()
+    }
+    
+    @objc func checkDevices() {
+        let cameraRunning = manualCameraOverride ?? checkIfAnyCameraIsInUse()
+        let micRunning = manualMicOverride ?? checkIfAnyMicIsInUse()
+        
+        DispatchQueue.main.async {
+            if self.isCameraActive != cameraRunning {
+                withAnimation(.interactiveSpring(response: 0.35, dampingFraction: 0.65)) {
+                    self.isCameraActive = cameraRunning
+                }
+            }
+            if self.isMicActive != micRunning {
+                withAnimation(.interactiveSpring(response: 0.35, dampingFraction: 0.65)) {
+                    self.isMicActive = micRunning
+                }
+            }
+        }
+    }
+    
+    // MARK: - CoreMediaIO Camera Detection
+    private func checkIfAnyCameraIsInUse() -> Bool {
+        var propertyAddress = CMIOObjectPropertyAddress(
+            mSelector: CMIOObjectPropertySelector(kCMIOHardwarePropertyDevices),
+            mScope: CMIOObjectPropertyScope(kCMIOObjectPropertyScopeGlobal),
+            mElement: CMIOObjectPropertyElement(kCMIOObjectPropertyElementMain)
+        )
+        
+        var dataSize: UInt32 = 0
+        var status = CMIOObjectGetPropertyDataSize(
+            CMIOObjectID(kCMIOObjectSystemObject),
+            &propertyAddress,
+            0,
+            nil,
+            &dataSize
+        )
+        guard status == 0 && dataSize > 0 else { return false }
+        
+        let deviceCount = Int(dataSize) / MemoryLayout<CMIODeviceID>.size
+        guard deviceCount > 0 else { return false }
+        var devices = [CMIODeviceID](repeating: 0, count: deviceCount)
+        var dataUsed: UInt32 = 0
+        
+        status = CMIOObjectGetPropertyData(
+            CMIOObjectID(kCMIOObjectSystemObject),
+            &propertyAddress,
+            0,
+            nil,
+            dataSize,
+            &dataUsed,
+            &devices
+        )
+        guard status == 0 else { return false }
+        
+        for deviceId in devices {
+            var runningAddress = CMIOObjectPropertyAddress(
+                mSelector: CMIOObjectPropertySelector(kCMIODevicePropertyDeviceIsRunningSomewhere),
+                mScope: CMIOObjectPropertyScope(kCMIOObjectPropertyScopeWildcard),
+                mElement: CMIOObjectPropertyElement(kCMIOObjectPropertyElementWildcard)
+            )
+            var isRunning: UInt32 = 0
+            let runningSize = UInt32(MemoryLayout<UInt32>.size)
+            var runningUsed: UInt32 = 0
+            
+            let runningStatus = CMIOObjectGetPropertyData(
+                deviceId,
+                &runningAddress,
+                0,
+                nil,
+                runningSize,
+                &runningUsed,
+                &isRunning
+            )
+            if runningStatus == 0 && isRunning != 0 {
+                return true
+            }
+        }
+        return false
+    }
+    
+    // MARK: - CoreAudio Microphone Detection
+    private func setupAudioListener() {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultInputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        
+        AudioObjectAddPropertyListenerBlock(
+            AudioObjectID(kAudioObjectSystemObject),
+            &address,
+            DispatchQueue.main
+        ) { [weak self] _, _ in
+            self?.checkDevices()
+        }
+    }
+    
+    private func getDefaultInputDeviceID() -> AudioDeviceID {
+        var deviceID: AudioDeviceID = kAudioObjectUnknown
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultInputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        
+        let status = AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject),
+            &address,
+            0,
+            nil,
+            &size,
+            &deviceID
+        )
+        
+        return status == noErr ? deviceID : kAudioObjectUnknown
+    }
+    
+    private func isDeviceRunning(_ deviceID: AudioDeviceID) -> Bool {
+        guard deviceID != kAudioObjectUnknown else { return false }
+        var runningAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyDeviceIsRunningSomewhere,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var isRunning: UInt32 = 0
+        var size = UInt32(MemoryLayout<UInt32>.size)
+        let status = AudioObjectGetPropertyData(
+            deviceID,
+            &runningAddress,
+            0,
+            nil,
+            &size,
+            &isRunning
+        )
+        return status == noErr && isRunning != 0
+    }
+    
+    private func checkIfAnyMicIsInUse() -> Bool {
+        // 1. Check Default Input Device
+        let defaultDev = getDefaultInputDeviceID()
+        if defaultDev != kAudioObjectUnknown && isDeviceRunning(defaultDev) {
+            return true
+        }
+        
+        // 2. Check all other audio devices that have input streams
+        var allDevicesAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDevices,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var allDevicesSize: UInt32 = 0
+        if AudioObjectGetPropertyDataSize(AudioObjectID(kAudioObjectSystemObject), &allDevicesAddress, 0, nil, &allDevicesSize) == noErr && allDevicesSize > 0 {
+            let count = Int(allDevicesSize) / MemoryLayout<AudioDeviceID>.size
+            var devices = [AudioDeviceID](repeating: 0, count: count)
+            if AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &allDevicesAddress, 0, nil, &allDevicesSize, &devices) == noErr {
+                for dev in devices {
+                    guard dev != defaultDev else { continue }
+                    var streamAddress = AudioObjectPropertyAddress(
+                        mSelector: kAudioDevicePropertyStreams,
+                        mScope: kAudioObjectPropertyScopeInput,
+                        mElement: kAudioObjectPropertyElementMain
+                    )
+                    var streamSize: UInt32 = 0
+                    if AudioObjectGetPropertyDataSize(dev, &streamAddress, 0, nil, &streamSize) == noErr && streamSize > 0 {
+                        var outStreamAddress = AudioObjectPropertyAddress(
+                            mSelector: kAudioDevicePropertyStreams,
+                            mScope: kAudioObjectPropertyScopeOutput,
+                            mElement: kAudioObjectPropertyElementMain
+                        )
+                        var outStreamSize: UInt32 = 0
+                        let hasOutput = AudioObjectGetPropertyDataSize(dev, &outStreamAddress, 0, nil, &outStreamSize) == noErr && outStreamSize > 0
+                        if !hasOutput && isDeviceRunning(dev) {
+                            return true
+                        }
+                    }
+                }
+            }
+        }
+        
+        return false
+    }
 }
