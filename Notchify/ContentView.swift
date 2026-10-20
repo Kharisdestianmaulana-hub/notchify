@@ -159,6 +159,17 @@ class NotchViewModel: ObservableObject {
     @Published var agendaEvents: [CustomEvent] = []
     @Published var showAgendaHUD: Bool = false
     @Published var agendaHUDMessage: String = ""
+    @Published var upcomingMeetingEvent: CustomEvent? = nil
+    @Published var dismissedMeetingIds: Set<UUID> = []
+    
+    func dismissMeetingAlert(id: UUID) {
+        dismissedMeetingIds.insert(id)
+        if upcomingMeetingEvent?.id == id {
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.7)) {
+                upcomingMeetingEvent = nil
+            }
+        }
+    }
     
     private var clipboardTimer: Timer?
     private var mediaTimer: Timer?
@@ -797,15 +808,51 @@ class SmartClipboardDetector {
         clipboardItems = clipboardItems.filter { isClipboardPinned(item: $0) }
     }
     
+    private var agendaTickCount = 0
     func startAgendaPolling() {
-        // Poll every 10 seconds to check for events starting soon
-        agendaTimer = Timer.scheduledTimer(withTimeInterval: 10.0, repeats: true) { [weak self] _ in
-            self?.checkUpcomingEvents()
+        // Poll every 1 second for real-time meeting countdown and every 10 seconds for general agenda notifications
+        agendaTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            guard let self = self else { return }
+            self.checkUpcomingMeeting()
+            self.agendaTickCount += 1
+            if self.agendaTickCount % 10 == 0 {
+                self.checkUpcomingEvents()
+            }
         }
     }
     
     func fetchAgenda() {
         self.agendaEvents = CustomAgendaManager.shared.fetchEvents(forDateOffset: self.agendaDateOffset)
+    }
+    
+    func checkUpcomingMeeting() {
+        let events = CustomAgendaManager.shared.fetchEvents(forDateOffset: 0)
+        let now = Date()
+        
+        let meeting = events.first { event in
+            guard event.hasMeetingLink, !self.dismissedMeetingIds.contains(event.id) else { return false }
+            let diff = event.date.timeIntervalSince(now)
+            // Active from 2 minutes before (120s) up to 10 minutes past start (-600s)
+            return diff <= 120 && diff >= -600
+        }
+        
+        DispatchQueue.main.async {
+            if let meeting = meeting {
+                if self.upcomingMeetingEvent?.id != meeting.id {
+                    withAnimation(.spring(response: 0.4, dampingFraction: 0.65)) {
+                        self.upcomingMeetingEvent = meeting
+                    }
+                } else {
+                    self.upcomingMeetingEvent = meeting
+                }
+            } else {
+                if self.upcomingMeetingEvent != nil {
+                    withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
+                        self.upcomingMeetingEvent = nil
+                    }
+                }
+            }
+        }
     }
     
     private func checkUpcomingEvents() {
@@ -3557,7 +3604,7 @@ struct ContentView: View {
             }
             if viewModel.selectedTab == .weather { return 165 }
             if viewModel.selectedTab == .system { return 215 }
-            if viewModel.selectedTab == .agenda { return viewModel.isPinningExpansion ? 330 : 275 }
+            if viewModel.selectedTab == .agenda { return viewModel.isPinningExpansion ? 360 : 275 }
             if viewModel.selectedTab == .pomodoro { return 185 }
             if viewModel.selectedTab == .dropzone { return viewModel.stagedFiles.isEmpty ? 180 : 195 }
             if viewModel.selectedTab == .clipboard { return viewModel.clipboardItems.isEmpty ? 180 : 235 }
@@ -4128,6 +4175,31 @@ struct ContentView: View {
                     .animation(.interactiveSpring(response: 0.5, dampingFraction: 0.55, blendDuration: 0), value: currentWidth)
                     .animation(.spring(response: 0.45, dampingFraction: 0.72), value: isPomodoroInMainIsland)
                     .animation(.spring(response: 0.4, dampingFraction: 0.65), value: viewModel.isPomodoroActive)
+                    .offset(y: isHiddenByFullscreen ? -80 : 0)
+                    .opacity(isHiddenByFullscreen ? 0 : notchOpacity)
+            }
+            
+            // Smart Meeting Auto-Joiner Side Island (Blossoms 2 minutes before meeting)
+            if let meeting = viewModel.upcomingMeetingEvent, !viewModel.isExpanded {
+                let isPomodoroOnRight = viewModel.isPomodoroActive && !viewModel.showTimesUp && !isPomodoroInMainIsland
+                let isPrivacyActive = privacy.isCameraActive || privacy.isMicActive
+                let meetingIslandWidth: CGFloat = 300
+                
+                MeetingAlertIslandView(viewModel: viewModel, event: meeting)
+                    .frame(width: meetingIslandWidth, alignment: isPomodoroOnRight ? .trailing : .leading)
+                    .offset(
+                        x: isPomodoroOnRight
+                            ? (-(currentWidth / 2) - 12 - (isPrivacyActive ? 60 : 0) - (meetingIslandWidth / 2))
+                            : ((currentWidth / 2) + 12 + (meetingIslandWidth / 2)),
+                        y: 0
+                    )
+                    .transition(.asymmetric(
+                        insertion: .move(edge: isPomodoroOnRight ? .trailing : .leading).combined(with: .scale(scale: 0.8)).combined(with: .opacity),
+                        removal: .move(edge: isPomodoroOnRight ? .trailing : .leading).combined(with: .scale(scale: 0.6)).combined(with: .opacity)
+                    ))
+                    .animation(.interactiveSpring(response: 0.5, dampingFraction: 0.55, blendDuration: 0), value: currentWidth)
+                    .animation(.spring(response: 0.45, dampingFraction: 0.72), value: viewModel.upcomingMeetingEvent)
+                    .animation(.spring(response: 0.45, dampingFraction: 0.72), value: isPomodoroOnRight)
                     .offset(y: isHiddenByFullscreen ? -80 : 0)
                     .opacity(isHiddenByFullscreen ? 0 : notchOpacity)
             }
@@ -5526,6 +5598,40 @@ struct CustomEvent: Identifiable, Codable, Equatable {
     var date: Date
     var colorName: String
     var isYearly: Bool? = false
+    var meetingURL: String? = nil
+    
+    init(id: UUID = UUID(), title: String, date: Date, colorName: String, isYearly: Bool? = false, meetingURL: String? = nil) {
+        self.id = id
+        self.title = title
+        self.date = date
+        self.colorName = colorName
+        self.isYearly = isYearly
+        self.meetingURL = meetingURL
+    }
+    
+    enum CodingKeys: String, CodingKey {
+        case id, title, date, colorName, isYearly, meetingURL
+    }
+    
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        self.title = try container.decode(String.self, forKey: .title)
+        self.date = try container.decode(Date.self, forKey: .date)
+        self.colorName = try container.decode(String.self, forKey: .colorName)
+        self.isYearly = try container.decodeIfPresent(Bool.self, forKey: .isYearly) ?? false
+        self.meetingURL = try container.decodeIfPresent(String.self, forKey: .meetingURL)
+    }
+    
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(title, forKey: .title)
+        try container.encode(date, forKey: .date)
+        try container.encode(colorName, forKey: .colorName)
+        try container.encode(isYearly, forKey: .isYearly)
+        try container.encode(meetingURL, forKey: .meetingURL)
+    }
     
     var isPast: Bool {
         date < Date()
@@ -5543,6 +5649,70 @@ struct CustomEvent: Identifiable, Codable, Equatable {
         case "purple": return .purple
         default: return .blue
         }
+    }
+    
+    var meetingLink: URL? {
+        if let explicit = meetingURL?.trimmingCharacters(in: .whitespacesAndNewlines), !explicit.isEmpty {
+            if let url = URL(string: explicit), url.scheme != nil {
+                return url
+            } else if let url = URL(string: "https://" + explicit) {
+                return url
+            }
+        }
+        return CustomEvent.extractMeetingURL(from: title)
+    }
+    
+    var hasMeetingLink: Bool {
+        meetingLink != nil
+    }
+    
+    static func extractMeetingURL(from text: String) -> URL? {
+        if let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) {
+            let matches = detector.matches(in: text, options: [], range: NSRange(location: 0, length: (text as NSString).length))
+            for match in matches {
+                if let url = match.url {
+                    let host = url.host?.lowercased() ?? ""
+                    let full = url.absoluteString.lowercased()
+                    if host.contains("meet.google.com") ||
+                       host.contains("zoom.us") ||
+                       host.contains("teams.microsoft.com") ||
+                       host.contains("teams.live.com") ||
+                       host.contains("webex.com") ||
+                       full.contains("meet.google") ||
+                       full.contains("zoom.us") ||
+                       full.contains("teams.microsoft") {
+                        return url
+                    }
+                }
+            }
+            if let firstURL = matches.first?.url {
+                return firstURL
+            }
+        }
+        
+        let regexPatterns = [
+            #"(?:https?:\/\/)?meet\.google\.com\/[a-zA-Z0-9\-]+"#,
+            #"(?:https?:\/\/)?[a-zA-Z0-9\.\-]*zoom\.us\/[a-zA-Z0-9\/\?\=\&\.\-\_]+"#,
+            #"(?:https?:\/\/)?teams\.microsoft\.com\/[a-zA-Z0-9\/\?\=\&\.\-\_\%]+"#,
+            #"(?:https?:\/\/)?[a-zA-Z0-9\.\-]*webex\.com\/[a-zA-Z0-9\/\?\=\&\.\-\_]+"#
+        ]
+        
+        let nsText = text as NSString
+        let fullRange = NSRange(location: 0, length: nsText.length)
+        for pattern in regexPatterns {
+            if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive),
+               let match = regex.firstMatch(in: text, options: [], range: fullRange) {
+                var matchedStr = nsText.substring(with: match.range)
+                if !matchedStr.lowercased().hasPrefix("http://") && !matchedStr.lowercased().hasPrefix("https://") {
+                    matchedStr = "https://" + matchedStr
+                }
+                if let url = URL(string: matchedStr) {
+                    return url
+                }
+            }
+        }
+        
+        return nil
     }
 }
 
@@ -5623,12 +5793,128 @@ struct AgendaBlossomView: View {
     }
 }
 
+// MARK: - Meeting Alert Side Island (1-Click Auto-Joiner)
+struct MeetingAlertIslandView: View {
+    @ObservedObject var viewModel: NotchViewModel
+    let event: CustomEvent
+    @State private var isPulsing: Bool = false
+    @State private var isHovered: Bool = false
+    @State private var remainingText: String = ""
+    let timer = Timer.publish(every: 1.0, on: .main, in: .common).autoconnect()
+    
+    var body: some View {
+        HStack(spacing: 8) {
+            // Video Camera Icon with Breathing Animation
+            Image(systemName: "video.fill")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundColor(Color(red: 0.2, green: 0.9, blue: 0.45))
+                .scaleEffect(isPulsing ? 1.15 : 0.92)
+                .animation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true), value: isPulsing)
+                .onAppear { isPulsing = true }
+            
+            // Meeting Title + Countdown (Clicking opens Notch Agenda tab)
+            Button(action: {
+                withAnimation(.spring(response: 0.38, dampingFraction: 0.72)) {
+                    viewModel.selectedTab = .agenda
+                    viewModel.isExpanded = true
+                }
+            }) {
+                HStack(spacing: 5) {
+                    Text(event.title)
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundColor(.white)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .frame(maxWidth: 105, alignment: .leading)
+                    
+                    Text("•")
+                        .foregroundColor(.white.opacity(0.35))
+                        .font(.system(size: 10))
+                    
+                    Text(remainingText)
+                        .font(.system(size: 11, weight: .bold, design: .monospaced))
+                        .foregroundColor(Color(red: 0.2, green: 0.9, blue: 0.45))
+                }
+            }
+            .buttonStyle(PlainButtonStyle())
+            
+            // 1-Click Direct Join Action Button
+            if let meetingURL = event.meetingLink {
+                Button(action: {
+                    NSWorkspace.shared.open(meetingURL)
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.7)) {
+                        viewModel.dismissMeetingAlert(id: event.id)
+                    }
+                }) {
+                    HStack(spacing: 3) {
+                        Image(systemName: "arrow.up.right")
+                            .font(.system(size: 8, weight: .bold))
+                        Text(LanguageManager.tr("Join Now"))
+                            .font(.system(size: 11, weight: .bold))
+                    }
+                    .foregroundColor(.black)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 4)
+                    .background(
+                        Capsule()
+                            .fill(Color(red: 0.2, green: 0.9, blue: 0.45))
+                    )
+                }
+                .buttonStyle(PlainButtonStyle())
+                .shadow(color: Color(red: 0.2, green: 0.9, blue: 0.45).opacity(0.4), radius: 4, x: 0, y: 1)
+            }
+            
+            // Dismiss Button
+            Button(action: {
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.7)) {
+                    viewModel.dismissMeetingAlert(id: event.id)
+                }
+            }) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundColor(.white.opacity(0.6))
+                    .frame(width: 18, height: 18)
+                    .background(Circle().fill(Color.white.opacity(0.12)))
+            }
+            .buttonStyle(PlainButtonStyle())
+            .help(LanguageManager.tr("Dismiss meeting alert"))
+        }
+        .padding(.horizontal, 10)
+        .frame(height: 34)
+        .background(Color.black)
+        .clipShape(Capsule())
+        .overlay(
+            Capsule()
+                .stroke(Color(red: 0.2, green: 0.9, blue: 0.45).opacity(0.45), lineWidth: 1)
+        )
+        .shadow(color: Color(red: 0.2, green: 0.9, blue: 0.45).opacity(0.25), radius: 6, x: 0, y: 1)
+        .onAppear {
+            updateRemaining()
+        }
+        .onReceive(timer) { _ in
+            updateRemaining()
+        }
+    }
+    
+    private func updateRemaining() {
+        let diff = event.date.timeIntervalSince(Date())
+        if diff > 0 {
+            let m = Int(diff) / 60
+            let s = Int(diff) % 60
+            remainingText = String(format: "%02d:%02d", m, s)
+        } else {
+            remainingText = LanguageManager.tr("In Progress")
+        }
+    }
+}
+
 struct AgendaCardView: View {
     @ObservedObject var viewModel: NotchViewModel
     let timer = Timer.publish(every: 60, on: .main, in: .common).autoconnect()
     
     @State private var isAdding = false
     @State private var newTitle = ""
+    @State private var newMeetingURL = ""
     @State private var newTime = Date()
     @State private var newColor = "blue"
     @State private var newIsYearly = false
@@ -5667,7 +5953,7 @@ struct AgendaCardView: View {
     }
     
     private var addForm: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 10) {
             Text(LanguageManager.tr("Add New Event"))
                 .font(.system(size: 16, weight: .bold))
                 .foregroundColor(.white)
@@ -5678,7 +5964,20 @@ struct AgendaCardView: View {
                 .background(Color.white.opacity(0.1))
                 .cornerRadius(6)
                 .foregroundColor(.white)
-                .font(.system(size: 14))
+                .font(.system(size: 13))
+            
+            HStack(spacing: 8) {
+                Image(systemName: "video.fill")
+                    .font(.system(size: 11))
+                    .foregroundColor(newMeetingURL.isEmpty ? .gray : Color(red: 0.2, green: 0.9, blue: 0.45))
+                TextField(LanguageManager.tr("Meeting link (Zoom, Meet, Teams)..."), text: $newMeetingURL)
+                    .textFieldStyle(PlainTextFieldStyle())
+                    .foregroundColor(.white)
+                    .font(.system(size: 12))
+            }
+            .padding(7)
+            .background(Color.white.opacity(0.1))
+            .cornerRadius(6)
             
             HStack {
                 Text(LanguageManager.tr("Time:"))
@@ -5701,7 +6000,7 @@ struct AgendaCardView: View {
                         .onTapGesture { newColor = cName }
                 }
             }
-            .padding(.top, 4)
+            .padding(.top, 2)
             
             Toggle(isOn: $newIsYearly) {
                 Text(LanguageManager.tr("Yearly (Birthday/Anniversary)"))
@@ -5714,6 +6013,7 @@ struct AgendaCardView: View {
             
             HStack {
                 Button(action: {
+                    newMeetingURL = ""
                     withAnimation { isAdding = false }
                 }) {
                     Text(LanguageManager.tr("Cancel"))
@@ -5729,10 +6029,18 @@ struct AgendaCardView: View {
                 Spacer()
                 
                 Button(action: {
-                    let ev = CustomEvent(title: newTitle.isEmpty ? "Untitled" : newTitle, date: newTime, colorName: newColor, isYearly: newIsYearly)
+                    let ev = CustomEvent(
+                        title: newTitle.isEmpty ? "Untitled" : newTitle,
+                        date: newTime,
+                        colorName: newColor,
+                        isYearly: newIsYearly,
+                        meetingURL: newMeetingURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : newMeetingURL.trimmingCharacters(in: .whitespacesAndNewlines)
+                    )
                     CustomAgendaManager.shared.addEvent(ev)
                     viewModel.fetchAgenda()
+                    viewModel.checkUpcomingMeeting()
                     newTitle = ""
+                    newMeetingURL = ""
                     withAnimation { isAdding = false }
                 }) {
                     Text(LanguageManager.tr("Save"))
@@ -5746,10 +6054,11 @@ struct AgendaCardView: View {
                 .buttonStyle(PlainButtonStyle())
             }
         }
-        .frame(height: 245)
+        .frame(height: 275)
         .onDisappear {
             isAdding = false
             newIsYearly = false
+            newMeetingURL = ""
             viewModel.isPinningExpansion = false
         }
     }
@@ -5845,7 +6154,7 @@ struct AgendaCardView: View {
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm"
         
-        return HStack(spacing: 12) {
+        return HStack(spacing: 10) {
             Circle()
                 .fill(event.color)
                 .frame(width: 8, height: 8)
@@ -5854,12 +6163,35 @@ struct AgendaCardView: View {
             Text(formatter.string(from: event.date))
                 .font(.system(size: 13, weight: .bold, design: .monospaced))
                 .foregroundColor(isPast ? .gray : .white)
-                .frame(width: 50, alignment: .leading)
+                .frame(width: 48, alignment: .leading)
             
             Text(event.title)
                 .font(.system(size: 14, weight: isNow ? .bold : .medium))
                 .foregroundColor(isPast ? .gray : .white)
                 .lineLimit(1)
+            
+            // Direct Join pill in event row
+            if let meetingURL = event.meetingLink {
+                Button(action: {
+                    NSWorkspace.shared.open(meetingURL)
+                }) {
+                    HStack(spacing: 3) {
+                        Image(systemName: "video.fill")
+                            .font(.system(size: 9))
+                        Text(LanguageManager.tr("Join"))
+                            .font(.system(size: 10, weight: .bold))
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(
+                        Capsule()
+                            .fill(Color(red: 0.18, green: 0.75, blue: 0.38))
+                    )
+                }
+                .buttonStyle(PlainButtonStyle())
+                .help(LanguageManager.tr("Join Now"))
+            }
             
             Spacer()
             
@@ -5868,6 +6200,7 @@ struct AgendaCardView: View {
                     withAnimation {
                         CustomAgendaManager.shared.deleteEvent(id: event.id)
                         viewModel.fetchAgenda()
+                        viewModel.checkUpcomingMeeting()
                     }
                 }) {
                     Image(systemName: "xmark.circle.fill")
@@ -5905,15 +6238,29 @@ struct AgendaCardView: View {
             let hours = diff / 3600
             let minutes = (diff % 3600) / 60
             let timeStr = hours > 0 ? "\(hours)j \(minutes)m" : "\(minutes)m"
-            return Text("\(LanguageManager.tr("Next:")) \(event.title) — \(timeStr) \(LanguageManager.tr("left"))")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(.cyan)
-                .lineLimit(1)
+            return HStack(spacing: 5) {
+                if event.hasMeetingLink {
+                    Image(systemName: "video.fill")
+                        .font(.system(size: 10))
+                        .foregroundColor(Color(red: 0.2, green: 0.9, blue: 0.45))
+                }
+                Text("\(LanguageManager.tr("Next:")) \(event.title) — \(timeStr) \(LanguageManager.tr("left"))")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(.cyan)
+                    .lineLimit(1)
+            }
         } else {
-            return Text("\(LanguageManager.tr("Next:")) \(event.title) — \(LanguageManager.tr("In progress"))")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(.green)
-                .lineLimit(1)
+            return HStack(spacing: 5) {
+                if event.hasMeetingLink {
+                    Image(systemName: "video.fill")
+                        .font(.system(size: 10))
+                        .foregroundColor(Color(red: 0.2, green: 0.9, blue: 0.45))
+                }
+                Text("\(LanguageManager.tr("Next:")) \(event.title) — \(LanguageManager.tr("In progress"))")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(Color(red: 0.2, green: 0.9, blue: 0.45))
+                    .lineLimit(1)
+            }
         }
     }
     
@@ -8835,6 +9182,12 @@ struct LanguageManager {
         "System Monitor": "Pemantau Sistem",
         "Agenda": "Agenda",
         "Add New Event": "Tambah Acara Baru",
+        "Meeting link (Zoom, Meet, Teams)...": "Tautan rapat (Zoom, Meet, Teams)...",
+        "Join Now": "Gabung Sekarang",
+        "Join": "Gabung",
+        "In Progress": "Sedang Berlangsung",
+        "Meeting in progress": "Rapat sedang berlangsung",
+        "Dismiss meeting alert": "Tutup peringatan rapat",
         "Title:": "Judul:",
         "Time:": "Waktu:",
         "Date:": "Tanggal:",
