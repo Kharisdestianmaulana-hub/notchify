@@ -1223,6 +1223,8 @@ struct DropZoneCardView: View {
 struct PomodoroTimerView: View {
     @ObservedObject var viewModel: NotchViewModel
     @State private var selectedMinutes: Double = 25
+    @State private var lastCustomMinutes: Double = 30
+    @State private var customInputText: String = "25"
     @State private var isBlinking = false
     
     var body: some View {
@@ -1346,61 +1348,145 @@ struct PomodoroTimerView: View {
                 .padding(.top, 4)
             } else {
                 // INACTIVE / SELECTION STATE
-                HStack(spacing: 12) {
-                    // Presets
-                    HStack(spacing: 8) {
+                HStack(spacing: 8) {
+                    // 4 Presets (3 Templates + 1 Custom)
+                    HStack(spacing: 5) {
                         presetButton(minutes: 25, title: "25m", subtitle: "Focus", icon: "brain.head.profile")
-                        presetButton(minutes: 5, title: "5m", subtitle: "Break", icon: "cup.and.saucer.fill")
                         presetButton(minutes: 15, title: "15m", subtitle: "Rest", icon: "leaf.fill")
+                        presetButton(minutes: 5, title: "5m", subtitle: "Break", icon: "cup.and.saucer.fill")
+                        customPresetButton()
                     }
                     
-                    // Stepper / Custom & Start
+                    // Stepper / Custom Input & Start
                     VStack(spacing: 6) {
-                        HStack(spacing: 6) {
+                        HStack(spacing: 3) {
                             Button(action: {
-                                if selectedMinutes > 5 {
-                                    selectedMinutes -= 5
+                                if selectedMinutes > 1 {
+                                    selectedMinutes -= 1
+                                    if selectedMinutes != 25 && selectedMinutes != 15 && selectedMinutes != 5 {
+                                        lastCustomMinutes = selectedMinutes
+                                    }
+                                    customInputText = "\(Int(selectedMinutes))"
                                 }
                             }) {
                                 Image(systemName: "minus")
-                                    .font(.system(size: 9, weight: .bold))
+                                    .font(.system(size: 8, weight: .bold))
                                     .foregroundColor(.white.opacity(0.7))
-                                    .frame(width: 22, height: 22)
+                                    .frame(width: 20, height: 20)
                                     .background(Color.white.opacity(0.1))
                                     .clipShape(Circle())
                             }
                             .buttonStyle(PlainButtonStyle())
+                            .help(LanguageManager.tr("Decrease (Right click for -5m)"))
+                            .contextMenu {
+                                Button("-5 " + LanguageManager.tr("min")) {
+                                    selectedMinutes = max(1, selectedMinutes - 5)
+                                    if selectedMinutes != 25 && selectedMinutes != 15 && selectedMinutes != 5 {
+                                        lastCustomMinutes = selectedMinutes
+                                    }
+                                    customInputText = "\(Int(selectedMinutes))"
+                                }
+                                Button("-15 " + LanguageManager.tr("min")) {
+                                    selectedMinutes = max(1, selectedMinutes - 15)
+                                    if selectedMinutes != 25 && selectedMinutes != 15 && selectedMinutes != 5 {
+                                        lastCustomMinutes = selectedMinutes
+                                    }
+                                    customInputText = "\(Int(selectedMinutes))"
+                                }
+                            }
                             
-                            Text("\(Int(selectedMinutes)) " + LanguageManager.tr("min"))
+                            HStack(spacing: 1) {
+                                TextField("", text: $customInputText, onCommit: {
+                                    commitInputText()
+                                })
+                                .textFieldStyle(PlainTextFieldStyle())
                                 .font(.system(size: 11, weight: .bold, design: .monospaced))
                                 .foregroundColor(.white)
-                                .frame(width: 44)
+                                .multilineTextAlignment(.trailing)
+                                .frame(width: 26)
+                                .onChange(of: customInputText) { newVal in
+                                    let filtered = newVal.filter { "0123456789".contains($0) }
+                                    if filtered != newVal {
+                                        customInputText = filtered
+                                    }
+                                    if let val = Double(filtered), val >= 1, val <= 360 {
+                                        selectedMinutes = val
+                                        if val != 25 && val != 15 && val != 5 {
+                                            lastCustomMinutes = val
+                                        }
+                                    }
+                                }
+                                
+                                Text(LanguageManager.tr("min"))
+                                    .font(.system(size: 9, weight: .medium))
+                                    .foregroundColor(.white.opacity(0.6))
+                            }
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 2)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(Color.white.opacity(0.08))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 6)
+                                            .stroke(isCustomSelected ? Color.orange.opacity(0.5) : Color.white.opacity(0.12), lineWidth: 0.8)
+                                    )
+                            )
                             
                             Button(action: {
-                                if selectedMinutes < 120 {
-                                    selectedMinutes += 5
+                                if selectedMinutes < 360 {
+                                    selectedMinutes += 1
+                                    if selectedMinutes != 25 && selectedMinutes != 15 && selectedMinutes != 5 {
+                                        lastCustomMinutes = selectedMinutes
+                                    }
+                                    customInputText = "\(Int(selectedMinutes))"
                                 }
                             }) {
                                 Image(systemName: "plus")
-                                    .font(.system(size: 9, weight: .bold))
+                                    .font(.system(size: 8, weight: .bold))
                                     .foregroundColor(.white.opacity(0.7))
-                                    .frame(width: 22, height: 22)
+                                    .frame(width: 20, height: 20)
                                     .background(Color.white.opacity(0.1))
                                     .clipShape(Circle())
                             }
                             .buttonStyle(PlainButtonStyle())
+                            .help(LanguageManager.tr("Increase (Right click for +5m)"))
+                            .contextMenu {
+                                Button("+5 " + LanguageManager.tr("min")) {
+                                    selectedMinutes = min(360, selectedMinutes + 5)
+                                    if selectedMinutes != 25 && selectedMinutes != 15 && selectedMinutes != 5 {
+                                        lastCustomMinutes = selectedMinutes
+                                    }
+                                    customInputText = "\(Int(selectedMinutes))"
+                                }
+                                Button("+15 " + LanguageManager.tr("min")) {
+                                    selectedMinutes = min(360, selectedMinutes + 15)
+                                    if selectedMinutes != 25 && selectedMinutes != 15 && selectedMinutes != 5 {
+                                        lastCustomMinutes = selectedMinutes
+                                    }
+                                    customInputText = "\(Int(selectedMinutes))"
+                                }
+                                Button("+30 " + LanguageManager.tr("min")) {
+                                    selectedMinutes = min(360, selectedMinutes + 30)
+                                    if selectedMinutes != 25 && selectedMinutes != 15 && selectedMinutes != 5 {
+                                        lastCustomMinutes = selectedMinutes
+                                    }
+                                    customInputText = "\(Int(selectedMinutes))"
+                                }
+                            }
                         }
                         
                         Button(action: {
+                            commitInputText()
                             withAnimation(.spring(response: 0.35, dampingFraction: 0.7)) {
                                 viewModel.startPomodoro(minutes: selectedMinutes)
                             }
                         }) {
-                            HStack(spacing: 5) {
+                            HStack(spacing: 4) {
                                 Image(systemName: "play.fill")
-                                    .font(.system(size: 9, weight: .bold))
-                                Text(LanguageManager.tr("Start Focus"))
-                                    .font(.system(size: 11, weight: .bold))
+                                    .font(.system(size: 8, weight: .bold))
+                                Text(startButtonTitle)
+                                    .font(.system(size: 10, weight: .bold))
+                                    .lineLimit(1)
                             }
                             .foregroundColor(.white)
                             .frame(maxWidth: .infinity)
@@ -1412,11 +1498,79 @@ struct PomodoroTimerView: View {
                         }
                         .buttonStyle(PlainButtonStyle())
                     }
-                    .frame(width: 104)
+                    .frame(width: 106)
                 }
                 .padding(.top, 4)
             }
         }
+    }
+    
+    private var isCustomSelected: Bool {
+        selectedMinutes != 25 && selectedMinutes != 15 && selectedMinutes != 5
+    }
+    
+    private var customButtonTitle: String {
+        if isCustomSelected {
+            return "\(Int(selectedMinutes))m"
+        } else {
+            return "\(Int(lastCustomMinutes))m"
+        }
+    }
+    
+    private var startButtonTitle: String {
+        if selectedMinutes == 25 {
+            return LanguageManager.tr("Start Focus")
+        } else if selectedMinutes == 15 {
+            return LanguageManager.tr("Start Rest")
+        } else if selectedMinutes == 5 {
+            return LanguageManager.tr("Start Break")
+        } else {
+            return LanguageManager.tr("Start Timer")
+        }
+    }
+    
+    private func commitInputText() {
+        if let val = Double(customInputText), val >= 1, val <= 360 {
+            selectedMinutes = val
+            if val != 25 && val != 15 && val != 5 {
+                lastCustomMinutes = val
+            }
+        } else {
+            customInputText = "\(Int(selectedMinutes))"
+        }
+    }
+    
+    private func customPresetButton() -> some View {
+        Button(action: {
+            withAnimation(.spring(response: 0.25, dampingFraction: 0.7)) {
+                selectedMinutes = lastCustomMinutes
+                customInputText = "\(Int(lastCustomMinutes))"
+            }
+        }) {
+            VStack(spacing: 3) {
+                Image(systemName: "slider.horizontal.3")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(isCustomSelected ? .orange : .white.opacity(0.7))
+                Text(customButtonTitle)
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(.white)
+                Text(LanguageManager.tr("Custom"))
+                    .font(.system(size: 8))
+                    .foregroundColor(.white.opacity(0.5))
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, minHeight: 56)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(isCustomSelected ? Color.orange.opacity(0.2) : Color.white.opacity(0.06))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(isCustomSelected ? Color.orange.opacity(0.6) : Color.white.opacity(0.08), lineWidth: isCustomSelected ? 1.5 : 0.5)
+                    )
+            )
+        }
+        .buttonStyle(PlainButtonStyle())
+        .help(LanguageManager.tr("Custom Timer"))
     }
     
     private func presetButton(minutes: Double, title: String, subtitle: String, icon: String) -> some View {
@@ -1424,18 +1578,20 @@ struct PomodoroTimerView: View {
         return Button(action: {
             withAnimation(.spring(response: 0.25, dampingFraction: 0.7)) {
                 selectedMinutes = minutes
+                customInputText = "\(Int(minutes))"
             }
         }) {
             VStack(spacing: 3) {
                 Image(systemName: icon)
-                    .font(.system(size: 15))
+                    .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(isSelected ? .orange : .white.opacity(0.7))
                 Text(title)
-                    .font(.system(size: 12, weight: .bold))
+                    .font(.system(size: 11, weight: .bold))
                     .foregroundColor(.white)
                 Text(LanguageManager.tr(subtitle))
-                    .font(.system(size: 9))
+                    .font(.system(size: 8))
                     .foregroundColor(.white.opacity(0.5))
+                    .lineLimit(1)
             }
             .frame(maxWidth: .infinity, minHeight: 56)
             .background(
@@ -8368,6 +8524,13 @@ struct LanguageManager {
         "Quick shelf to drag & drop files anywhere": "Penyimpanan cepat untuk seret & lepas file ke mana saja",
         "Focus Session": "Sesi Fokus",
         "Start Focus": "Mulai Fokus",
+        "Start Break": "Mulai Jeda",
+        "Start Rest": "Mulai Santai",
+        "Start Timer": "Mulai Timer",
+        "Custom": "Kustom",
+        "Custom Timer": "Timer Kustom",
+        "Decrease (Right click for -5m)": "Kurang (Klik kanan untuk -5 mnt)",
+        "Increase (Right click for +5m)": "Tambah (Klik kanan untuk +5 mnt)",
         "Pause": "Jeda",
         "Resume": "Lanjut",
         "min": "mnt",
