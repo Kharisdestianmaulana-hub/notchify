@@ -2790,18 +2790,21 @@ struct ContentView: View {
 
     private var currentHeight: CGFloat {
         if viewModel.isExpanded {
-            if viewModel.selectedTab == .calculator { return 265 }
-            if viewModel.selectedTab == .media && !viewModel.lyrics.isEmpty && enableLyrics { return 280 }
-            if viewModel.selectedTab == .weather { return 155 }
-            if viewModel.selectedTab == .system { return 205 }
-            if viewModel.selectedTab == .agenda { return viewModel.isPinningExpansion ? 320 : 265 }
-            if viewModel.selectedTab == .pomodoro { return 175 }
-            if viewModel.selectedTab == .dropzone { return viewModel.stagedFiles.isEmpty ? 175 : 185 }
-            if viewModel.selectedTab == .clipboard { return viewModel.clipboardItems.isEmpty ? 175 : 225 }
-            if viewModel.selectedTab == .mirror { return 340 }
-            if viewModel.selectedTab == .notes { return 260 }
-            if viewModel.selectedTab == .network { return 220 }
-            return expandedHeight
+            if viewModel.selectedTab == .calculator { return 275 }
+            if viewModel.selectedTab == .media {
+                if !viewModel.lyrics.isEmpty && enableLyrics { return 285 }
+                return viewModel.duration > 0 ? 152 : 142
+            }
+            if viewModel.selectedTab == .weather { return 165 }
+            if viewModel.selectedTab == .system { return 215 }
+            if viewModel.selectedTab == .agenda { return viewModel.isPinningExpansion ? 330 : 275 }
+            if viewModel.selectedTab == .pomodoro { return 185 }
+            if viewModel.selectedTab == .dropzone { return viewModel.stagedFiles.isEmpty ? 180 : 195 }
+            if viewModel.selectedTab == .clipboard { return viewModel.clipboardItems.isEmpty ? 180 : 235 }
+            if viewModel.selectedTab == .mirror { return 350 }
+            if viewModel.selectedTab == .notes { return 270 }
+            if viewModel.selectedTab == .network { return 230 }
+            return 150
         }
         if viewModel.showBatteryHUD { return 44 }
         if viewModel.showClipboardHUD { return 44 }
@@ -2933,13 +2936,13 @@ struct ContentView: View {
                             }
                             .padding(.horizontal, 30)
                             .padding(.top, 12)
-                            .padding(.bottom, 6)
+                            .padding(.bottom, 8)
                             
                             // Subtle Tab Divider
                             Rectangle()
-                                .fill(Color.white.opacity(0.08))
+                                .fill(Color.white.opacity(0.12))
                                 .frame(height: 0.5)
-                                .padding(.horizontal, 30)
+                                .padding(.horizontal, 24)
                             
                             // Tab Content with Floating Chevrons
                             ZStack(alignment: .top) {
@@ -2980,6 +2983,8 @@ struct ContentView: View {
                                     }
                                 }
                                 .padding(.horizontal, 42)
+                                .padding(.top, 14)
+                                .padding(.bottom, 12)
                                 
                                 // Floating Chevron Overlays (Cleanly inset inside Notch body, anchored vertically & consistently visible)
                                 HStack {
@@ -3037,7 +3042,7 @@ struct ContentView: View {
                                     }
                                     .padding(.trailing, 18)
                                 }
-                                .padding(.top, 45)
+                                .padding(.top, 28)
                             }
                         }
                         .transition(.scale(scale: 0.01, anchor: .top))
@@ -7551,5 +7556,5 @@ class PrivacyMonitor: ObservableObject {
     
     static let shared = PrivacyMonitor()
     func toggleCamera() { isCameraActive.toggle() }
-    func toggleMic() { isMicActive.toggle() }
+    func toggleMic() {   isMicActive.toggle() }
 }
