@@ -88,6 +88,7 @@ class NotchViewModel: ObservableObject {
     // DropZone States
     @Published var stagedFiles: [URL] = []
     @Published var isHoveringWithFile: Bool = false
+    @Published var showDropSuccessHUD: Bool = false
     
     // Pomodoro States
     @Published var isPomodoroActive: Bool = false
@@ -2674,26 +2675,128 @@ struct CompactMediaView: View {
 
 // MARK: - Blossom Animations
 struct DropFileBlossomView: View {
-    @State private var scale: CGFloat = 0.4
-    @State private var arrowOffset: CGFloat = -8
+    @State private var rotation: Double = 0
+    @State private var pulseScale: CGFloat = 0.8
+    @State private var pulseOpacity: Double = 0.35
+    @State private var arrowOffset: CGFloat = -3
+    @State private var sparkleScale: CGFloat = 0.85
     
     var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "arrow.down.doc.fill")
-                .font(.system(size: 22))
-                .offset(y: arrowOffset)
-            Text(LanguageManager.tr("DROP FILE HERE"))
-                .font(.system(size: 14, weight: .black))
-        }
-        .frame(height: 56)
-        .foregroundColor(.cyan)
-        .scaleEffect(scale)
-        .onAppear {
-            withAnimation(.interactiveSpring(response: 0.4, dampingFraction: 0.4, blendDuration: 0)) {
-                scale = 1.0
+        HStack(spacing: 12) {
+            // Portal Vortex Ring
+            ZStack {
+                // Outer rotating accretion ring
+                Circle()
+                    .strokeBorder(
+                        AngularGradient(
+                            gradient: Gradient(colors: [
+                                .cyan,
+                                .blue,
+                                .purple,
+                                .pink,
+                                .cyan
+                            ]),
+                            center: .center
+                        ),
+                        style: StrokeStyle(lineWidth: 2, dash: [4, 3])
+                    )
+                    .frame(width: 32, height: 32)
+                    .rotationEffect(.degrees(rotation))
+                
+                // Pulsing suction wave
+                Circle()
+                    .stroke(Color.cyan.opacity(pulseOpacity), lineWidth: 1.5)
+                    .frame(width: 26, height: 26)
+                    .scaleEffect(pulseScale)
+                
+                // Deep gravitational core
+                Circle()
+                    .fill(Color.black.opacity(0.85))
+                    .frame(width: 20, height: 20)
+                
+                // Suction arrow bobbing towards the center
+                Image(systemName: "arrow.down")
+                    .font(.system(size: 11, weight: .heavy))
+                    .foregroundColor(.cyan)
+                    .offset(y: arrowOffset)
             }
-            withAnimation(.easeInOut(duration: 0.4).repeatForever(autoreverses: true)) {
+            .frame(width: 34, height: 34)
+            
+            // Typography
+            VStack(alignment: .leading, spacing: 2) {
+                Text(LanguageManager.tr("Drop to Absorb"))
+                    .font(.system(size: 12, weight: .bold, design: .rounded))
+                    .foregroundColor(.white)
+                
+                HStack(spacing: 4) {
+                    Image(systemName: "tray.and.arrow.down.fill")
+                        .font(.system(size: 9))
+                    Text(LanguageManager.tr("Temporary Shelf"))
+                        .font(.system(size: 10, weight: .medium, design: .rounded))
+                }
+                .foregroundColor(Color.cyan.opacity(0.85))
+            }
+            
+            Spacer(minLength: 0)
+            
+            // Sparkle suction accent
+            Image(systemName: "sparkles")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(Color.purple.opacity(0.9))
+                .scaleEffect(sparkleScale)
+                .opacity(sparkleScale)
+        }
+        .padding(.horizontal, 14)
+        .frame(height: 56)
+        .onAppear {
+            withAnimation(.linear(duration: 3).repeatForever(autoreverses: false)) {
+                rotation = 360
+            }
+            withAnimation(.easeInOut(duration: 0.7).repeatForever(autoreverses: true)) {
+                pulseScale = 1.15
+                pulseOpacity = 0.85
                 arrowOffset = 2
+            }
+            withAnimation(.easeInOut(duration: 0.5).repeatForever(autoreverses: true)) {
+                sparkleScale = 1.2
+            }
+        }
+    }
+}
+
+struct DropSuccessBlossomView: View {
+    @State private var checkScale: CGFloat = 0.5
+    @State private var glowOpacity: Double = 0.2
+    
+    var body: some View {
+        HStack(spacing: 10) {
+            ZStack {
+                Circle()
+                    .fill(Color.green.opacity(glowOpacity))
+                    .frame(width: 26, height: 26)
+                    .blur(radius: 4)
+                
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 19, weight: .bold))
+                    .foregroundColor(.green)
+            }
+            .scaleEffect(checkScale)
+            
+            Text(LanguageManager.tr("File Stashed!"))
+                .font(.system(size: 13, weight: .bold, design: .rounded))
+                .foregroundColor(.white)
+        }
+        .padding(.horizontal, 16)
+        .frame(height: 46)
+        .onAppear {
+            withAnimation(.interactiveSpring(response: 0.32, dampingFraction: 0.5, blendDuration: 0)) {
+                checkScale = 1.05
+                glowOpacity = 0.65
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
+                withAnimation(.spring(response: 0.25, dampingFraction: 0.7)) {
+                    checkScale = 1.0
+                }
             }
         }
     }
@@ -3038,7 +3141,8 @@ struct ContentView: View {
         if viewModel.showTimesUp { return 260 }
         if viewModel.showDeviceHUD { return 260 }
         if viewModel.showVolumeHUD { return 160 }
-        if viewModel.isHoveringWithFile { return 240 }
+        if viewModel.isHoveringWithFile { return 255 }
+        if viewModel.showDropSuccessHUD { return 220 }
         return viewModel.showClock ? clockWidth : mediaWidth
     }
 
@@ -3067,11 +3171,12 @@ struct ContentView: View {
         if viewModel.showVolumeHUD { return 44 }
         if viewModel.showAgendaHUD { return 44 }
         if viewModel.isHoveringWithFile { return 56 }
+        if viewModel.showDropSuccessHUD { return 46 }
         return compactHeight + blossomHeight
     }
     
     private var isBlossoming: Bool {
-        viewModel.showBatteryHUD || viewModel.showClipboardHUD || viewModel.showTimesUp || viewModel.showDeviceHUD || viewModel.showVolumeHUD || viewModel.showAgendaHUD || viewModel.isHoveringWithFile
+        viewModel.showBatteryHUD || viewModel.showClipboardHUD || viewModel.showTimesUp || viewModel.showDeviceHUD || viewModel.showVolumeHUD || viewModel.showAgendaHUD || viewModel.isHoveringWithFile || viewModel.showDropSuccessHUD
     }
     
     var body: some View {
@@ -3321,6 +3426,9 @@ struct ContentView: View {
                             if viewModel.isHoveringWithFile {
                                 DropFileBlossomView()
                                     .transition(.opacity.combined(with: .scale(scale: 0.8)))
+                            } else if viewModel.showDropSuccessHUD {
+                                DropSuccessBlossomView()
+                                    .transition(.opacity.combined(with: .scale(scale: 0.85)))
                             } else if viewModel.showBatteryHUD {
                                 BatteryBlossomView(level: viewModel.batteryLevel, isCharging: viewModel.isBatteryCharging, isAC: viewModel.isACConnected)
                                     .transition(.opacity.combined(with: .scale(scale: 0.8)))
@@ -3360,6 +3468,7 @@ struct ContentView: View {
                             if expandTrigger == "hover" {
                                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
                                     guard !viewModel.isHoveringWithFile else { return }
+                                    guard !viewModel.showDropSuccessHUD else { return }
                                     withAnimation(.spring(response: 0.38, dampingFraction: 0.72)) {
                                         viewModel.isExpanded = true
                                     }
@@ -3373,6 +3482,7 @@ struct ContentView: View {
                         } else {
                             DispatchQueue.main.asyncAfter(deadline: .now() + autoHideDelay) {
                                 guard !viewModel.isHoveringWithFile else { return }
+                                guard !viewModel.showDropSuccessHUD else { return }
                                 guard !viewModel.isPinningExpansion else { return }
                                 guard !showTabPicker else { return }
                                 withAnimation(.spring(response: 0.38, dampingFraction: 0.72)) {
@@ -3399,13 +3509,22 @@ struct ContentView: View {
                                 }
                             }
                             
-                            // Swallow animation
-                            withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
-                                blossomHeight = -8
+                            // Audio chime & Green checkmark drop success HUD
+                            NSSound(named: "Glass")?.play()
+                            withAnimation(.interactiveSpring(response: 0.35, dampingFraction: 0.65)) {
+                                viewModel.showDropSuccessHUD = true
+                                blossomHeight = -6
                             }
+                            
                             DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                                withAnimation(.spring(response: 0.4, dampingFraction: 0.72)) {
+                                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
                                     blossomHeight = 0
+                                }
+                            }
+                            
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+                                withAnimation(.spring(response: 0.4, dampingFraction: 0.72)) {
+                                    viewModel.showDropSuccessHUD = false
                                     viewModel.selectedTab = .dropzone
                                     viewModel.isExpanded = true
                                 }
@@ -3418,6 +3537,7 @@ struct ContentView: View {
             .animation(.interactiveSpring(response: 0.5, dampingFraction: 0.6, blendDuration: 0), value: viewModel.isExpanded)
             .animation(.interactiveSpring(response: 0.5, dampingFraction: 0.55, blendDuration: 0), value: viewModel.showClock)
             .animation(.interactiveSpring(response: 0.5, dampingFraction: 0.55, blendDuration: 0), value: viewModel.isHoveringWithFile)
+            .animation(.interactiveSpring(response: 0.5, dampingFraction: 0.55, blendDuration: 0), value: viewModel.showDropSuccessHUD)
             .animation(.interactiveSpring(response: 0.5, dampingFraction: 0.55, blendDuration: 0), value: viewModel.showTimesUp)
             .animation(.interactiveSpring(response: 0.5, dampingFraction: 0.55, blendDuration: 0), value: viewModel.showVolumeHUD)
             .animation(.interactiveSpring(response: 0.5, dampingFraction: 0.55, blendDuration: 0), value: viewModel.showBatteryHUD)
@@ -8198,6 +8318,10 @@ struct LanguageManager {
         "Glass Transparency Level": "Tingkat Transparansi Kaca",
         "TIME'S UP!": "WAKTU HABIS!",
         "DROP FILE HERE": "LEPAS FILE DI SINI",
+        "Drop to Absorb": "Lepas untuk Menyerap",
+        "Temporary Shelf": "Rak Berkas Sementara",
+        "File Stashed!": "File Tersimpan!",
+        "Files Stashed!": "File Tersimpan!",
         "Copied to Clipboard": "Disalin ke Clipboard",
         "Cut to Clipboard": "Terpotong",
         "File Copied": "File Tersalin",
