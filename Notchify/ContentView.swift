@@ -1618,45 +1618,111 @@ struct PomodoroTimerView: View {
 // MARK: - Detached Pomodoro Island
 struct DetachedPomodoroView: View {
     @ObservedObject var viewModel: NotchViewModel
+    @State private var isHovered: Bool = false
     
     var body: some View {
-        Button(action: {
-            withAnimation(.spring(response: 0.38, dampingFraction: 0.72)) {
-                viewModel.selectedTab = .pomodoro
-                viewModel.isExpanded = true
-            }
-        }) {
-            HStack(spacing: 6) {
-                ZStack {
-                    Circle()
-                        .stroke(Color.white.opacity(0.2), lineWidth: 3)
-                        .frame(width: 18, height: 18)
-                    
-                    Circle()
-                        .trim(from: 0, to: CGFloat(viewModel.pomodoroTotal > 0 ? viewModel.pomodoroRemaining / viewModel.pomodoroTotal : 0))
-                        .stroke(
-                            viewModel.isPomodoroPaused ? Color.yellow : Color.orange,
-                            style: StrokeStyle(lineWidth: 3, lineCap: .round)
-                        )
-                        .frame(width: 18, height: 18)
-                        .rotationEffect(.degrees(-90))
+        HStack(spacing: 6) {
+            // Main Timer Display Button (Click opens Pomodoro tab in Notch)
+            Button(action: {
+                withAnimation(.spring(response: 0.38, dampingFraction: 0.72)) {
+                    viewModel.selectedTab = .pomodoro
+                    viewModel.isExpanded = true
                 }
-                
-                Text(timeString(from: viewModel.pomodoroRemaining))
-                    .font(.system(size: 12, weight: .bold, design: .monospaced))
-                    .foregroundColor(viewModel.isPomodoroPaused ? .yellow : .orange)
+            }) {
+                HStack(spacing: 6) {
+                    ZStack {
+                        Circle()
+                            .stroke(Color.white.opacity(0.2), lineWidth: 3)
+                            .frame(width: 18, height: 18)
+                        
+                        Circle()
+                            .trim(from: 0, to: CGFloat(viewModel.pomodoroTotal > 0 ? viewModel.pomodoroRemaining / viewModel.pomodoroTotal : 0))
+                            .stroke(
+                                viewModel.isPomodoroPaused ? Color.yellow : Color.orange,
+                                style: StrokeStyle(lineWidth: 3, lineCap: .round)
+                            )
+                            .frame(width: 18, height: 18)
+                            .rotationEffect(.degrees(-90))
+                    }
+                    
+                    Text(timeString(from: viewModel.pomodoroRemaining))
+                        .font(.system(size: 12, weight: .bold, design: .monospaced))
+                        .foregroundColor(viewModel.isPomodoroPaused ? .yellow : .orange)
+                }
             }
-            .padding(.horizontal, 10)
-            .frame(height: 34)
-            .background(Color.black)
-            .clipShape(Capsule())
-            .overlay(
-                Capsule()
-                    .stroke((viewModel.isPomodoroPaused ? Color.yellow : Color.orange).opacity(0.4), lineWidth: 1)
-            )
-            .shadow(color: (viewModel.isPomodoroPaused ? Color.yellow : Color.orange).opacity(0.3), radius: 5, x: 0, y: 1)
+            .buttonStyle(PlainButtonStyle())
+            
+            // Micro-Peek Inline Controls (Slides in on hover)
+            if isHovered {
+                HStack(spacing: 4) {
+                    // Pause / Resume Button
+                    Button(action: {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                            if viewModel.isPomodoroPaused {
+                                viewModel.resumePomodoro()
+                            } else {
+                                viewModel.pausePomodoro()
+                            }
+                        }
+                    }) {
+                        Image(systemName: viewModel.isPomodoroPaused ? "play.fill" : "pause.fill")
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundColor(viewModel.isPomodoroPaused ? .yellow : .orange)
+                            .frame(width: 20, height: 20)
+                            .background(
+                                Circle()
+                                    .fill((viewModel.isPomodoroPaused ? Color.yellow : Color.orange).opacity(0.18))
+                                    .overlay(
+                                        Circle()
+                                            .stroke((viewModel.isPomodoroPaused ? Color.yellow : Color.orange).opacity(0.35), lineWidth: 0.5)
+                                    )
+                            )
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .help(viewModel.isPomodoroPaused ? LanguageManager.tr("Resume") : LanguageManager.tr("Pause"))
+                    
+                    // Stop Button
+                    Button(action: {
+                        withAnimation(.spring(response: 0.38, dampingFraction: 0.72)) {
+                            viewModel.stopPomodoro()
+                        }
+                    }) {
+                        Image(systemName: "stop.fill")
+                            .font(.system(size: 7, weight: .bold))
+                            .foregroundColor(Color(red: 1.0, green: 0.35, blue: 0.35))
+                            .frame(width: 20, height: 20)
+                            .background(
+                                Circle()
+                                    .fill(Color.red.opacity(0.18))
+                                    .overlay(
+                                        Circle()
+                                            .stroke(Color.red.opacity(0.35), lineWidth: 0.5)
+                                    )
+                            )
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .help(LanguageManager.tr("Stop"))
+                }
+                .transition(.asymmetric(
+                    insertion: .move(edge: .leading).combined(with: .opacity).combined(with: .scale(scale: 0.7)),
+                    removal: .move(edge: .leading).combined(with: .opacity).combined(with: .scale(scale: 0.7))
+                ))
+            }
         }
-        .buttonStyle(PlainButtonStyle())
+        .padding(.horizontal, isHovered ? 8 : 10)
+        .frame(height: 34)
+        .background(Color.black)
+        .clipShape(Capsule())
+        .overlay(
+            Capsule()
+                .stroke((viewModel.isPomodoroPaused ? Color.yellow : Color.orange).opacity(0.4), lineWidth: 1)
+        )
+        .shadow(color: (viewModel.isPomodoroPaused ? Color.yellow : Color.orange).opacity(0.3), radius: 5, x: 0, y: 1)
+        .onHover { hovering in
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.72)) {
+                isHovered = hovering
+            }
+        }
         .help(LanguageManager.tr("Focus Timer: Click to open"))
         .contextMenu {
             Button(viewModel.isPomodoroPaused ? LanguageManager.tr("Resume") : LanguageManager.tr("Pause")) {
@@ -2609,56 +2675,118 @@ class DragSourceNSView: NSView, NSDraggingSource {
 }
 
 // MARK: - Waveform View
+// MARK: - Siri-Style Fluid Waveform Shape
+struct SiriWaveCurve: Shape {
+    var phase: Double
+    var amplitude: CGFloat
+    var frequency: CGFloat = 1.4
+    
+    var animatableData: AnimatablePair<Double, CGFloat> {
+        get { AnimatablePair(phase, amplitude) }
+        set {
+            phase = newValue.first
+            amplitude = newValue.second
+        }
+    }
+    
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        let width = rect.width
+        let height = rect.height
+        let midY = height / 2
+        
+        guard width > 0 && height > 0 else { return path }
+        
+        path.move(to: CGPoint(x: 0, y: midY))
+        
+        let step: CGFloat = 1.0
+        for x in stride(from: 0, through: width, by: step) {
+            let relativeX = x / width
+            // Bell curve envelope: clamps smoothly to 0 at edges, max in the middle
+            let envelope = sin(relativeX * .pi)
+            let y = midY + sin(relativeX * 2 * .pi * frequency + phase) * amplitude * envelope
+            path.addLine(to: CGPoint(x: x, y: y))
+        }
+        
+        return path
+    }
+}
+
+// MARK: - Waveform View (Fluid Siri Multi-Color Wave)
 struct WaveformView: View {
     var isPlaying: Bool
     var color: Color = .orange
-    @State private var heights: [CGFloat] = [4, 4, 4, 4]
-    @State private var animating = false
+    
+    @State private var animatedAmplitude: CGFloat = 0.0
+    
+    private var primaryGradient: LinearGradient {
+        LinearGradient(
+            colors: [
+                Color(red: 0.18, green: 0.85, blue: 1.0),   // Neon Cyan
+                Color(red: 0.65, green: 0.35, blue: 1.0),   // Vibrant Violet
+                Color(red: 1.0, green: 0.28, blue: 0.70),   // Hot Pink
+                Color(red: 1.0, green: 0.62, blue: 0.18)    // Amber Gold
+            ],
+            startPoint: .leading,
+            endPoint: .trailing
+        )
+    }
+    
+    private var secondaryGradient: LinearGradient {
+        LinearGradient(
+            colors: [
+                Color(red: 0.95, green: 0.25, blue: 0.85).opacity(0.65),
+                Color(red: 0.20, green: 0.75, blue: 1.0).opacity(0.65)
+            ],
+            startPoint: .trailing,
+            endPoint: .leading
+        )
+    }
+    
+    private func computeWave1(time: Double) -> (phase: Double, amplitude: CGFloat) {
+        let phase = time * 5.2
+        let rawAmp = isPlaying ? (5.5 + sin(time * 3.5) * 1.5) : 0.0
+        let amp = CGFloat(rawAmp) * animatedAmplitude
+        return (phase, amp)
+    }
+    
+    private func computeWave2(time: Double) -> (phase: Double, amplitude: CGFloat) {
+        let phase = -time * 4.0 + 1.2
+        let rawAmp = isPlaying ? (4.0 + cos(time * 2.8) * 1.2) : 0.0
+        let amp = CGFloat(rawAmp) * animatedAmplitude
+        return (phase, amp)
+    }
     
     var body: some View {
-        HStack(spacing: 2) {
-            ForEach(0..<4, id: \.self) { i in
-                RoundedRectangle(cornerRadius: 1.5)
-                    .fill(color == .clear ? Color.orange : color)
-                    .frame(width: 3, height: heights[i])
-                    .animation(.easeInOut(duration: 0.3), value: color)
+        TimelineView(.animation(paused: !isPlaying && animatedAmplitude == 0)) { timeline in
+            let time = timeline.date.timeIntervalSinceReferenceDate
+            let w1 = computeWave1(time: time)
+            let w2 = computeWave2(time: time)
+            
+            ZStack {
+                // Secondary Harmonic Wave (Depth layer)
+                SiriWaveCurve(phase: w2.phase, amplitude: w2.amplitude, frequency: 1.8)
+                    .stroke(secondaryGradient, style: StrokeStyle(lineWidth: 1.8, lineCap: .round, lineJoin: .round))
+                    .blur(radius: 0.5)
+                
+                // Primary Vibrant Siri Wave
+                SiriWaveCurve(phase: w1.phase, amplitude: w1.amplitude, frequency: 1.3)
+                    .stroke(primaryGradient, style: StrokeStyle(lineWidth: 2.2, lineCap: .round, lineJoin: .round))
+                    .shadow(color: Color(red: 0.65, green: 0.35, blue: 1.0).opacity(0.45), radius: 3, x: 0, y: 0)
+            }
+        }
+        .frame(width: 28, height: 16)
+        .onAppear {
+            if isPlaying {
+                withAnimation(.spring(response: 0.45, dampingFraction: 0.65)) {
+                    animatedAmplitude = 1.0
+                }
             }
         }
         .onChange(of: isPlaying) { playing in
-            if playing {
-                startAnimating()
-            } else {
-                stopAnimating()
+            withAnimation(.spring(response: 0.45, dampingFraction: 0.72)) {
+                animatedAmplitude = playing ? 1.0 : 0.0
             }
-        }
-        .onAppear {
-            if isPlaying {
-                startAnimating()
-            }
-        }
-    }
-    
-    private func startAnimating() {
-        animating = true
-        animateWave()
-    }
-    
-    private func stopAnimating() {
-        animating = false
-        withAnimation(.easeOut(duration: 0.3)) {
-            for i in 0..<4 { heights[i] = 4 }
-        }
-    }
-    
-    private func animateWave() {
-        guard animating else { return }
-        withAnimation(.easeInOut(duration: 0.3)) {
-            for i in 0..<4 {
-                heights[i] = CGFloat.random(in: 3...16)
-            }
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-            animateWave()
         }
     }
 }
@@ -3975,7 +4103,8 @@ struct ContentView: View {
             // Left Privacy Indicator (Camera & Microphone Island) - Repels outward on blossom & expansion
             if privacy.isCameraActive || privacy.isMicActive {
                 PrivacyIndicatorView()
-                    .offset(x: -(currentWidth / 2) - 12 - (privacy.isCameraActive && privacy.isMicActive ? 22 : 16), y: 0)
+                    .frame(width: 250, alignment: .trailing)
+                    .offset(x: -(currentWidth / 2) - 12 - 125, y: 0)
                     .transition(.asymmetric(
                         insertion: .move(edge: .trailing).combined(with: .scale(scale: 0.8)).combined(with: .opacity),
                         removal: .move(edge: .trailing).combined(with: .scale(scale: 0.8)).combined(with: .opacity)
@@ -3990,7 +4119,8 @@ struct ContentView: View {
             // Right Detached Pomodoro Timer Island - Repels outward on blossom & absorbs into main island
             if viewModel.isPomodoroActive && !viewModel.isExpanded && !viewModel.showTimesUp && !isPomodoroInMainIsland {
                 DetachedPomodoroView(viewModel: viewModel)
-                    .offset(x: (currentWidth / 2) + 12 + 42, y: 0)
+                    .frame(width: 250, alignment: .leading)
+                    .offset(x: (currentWidth / 2) + 12 + 125, y: 0)
                     .transition(.asymmetric(
                         insertion: .move(edge: .leading).combined(with: .scale(scale: 0.8)).combined(with: .opacity),
                         removal: .move(edge: .leading).combined(with: .scale(scale: 0.5)).combined(with: .opacity)
@@ -8685,6 +8815,11 @@ struct LanguageManager {
         "Camera in use": "Kamera sedang aktif",
         "Microphone in use": "Mikrofon sedang aktif",
         "Camera & Microphone in use": "Kamera & Mikrofon sedang aktif",
+        "In use by:": "Digunakan oleh:",
+        "Camera & Microphone": "Kamera & Mikrofon",
+        "System Camera": "Kamera Sistem",
+        "System Microphone": "Mikrofon Sistem",
+        "System App": "Aplikasi Sistem",
         "Toggle Camera Indicator": "Uji Indikator Kamera",
         "Toggle Mic Indicator": "Uji Indikator Mikrofon",
         "Copied to Clipboard": "Disalin ke Clipboard",
@@ -8925,6 +9060,8 @@ struct LanguageManager {
 struct PrivacyIndicatorView: View {
     @ObservedObject var privacy = PrivacyMonitor.shared
     @State private var isBlinking = false
+    @State private var isHovered = false
+    @State private var detectedAppName: String = ""
     
     var body: some View {
         Button(action: {
@@ -8932,41 +9069,65 @@ struct PrivacyIndicatorView: View {
                 privacy.toggleCamera()
             }
         }) {
-            ZStack {
-                // Background Island
+            ZStack(alignment: .trailing) {
+                // Background Island Capsule
                 Capsule()
                     .fill(Color.black)
-                    .frame(width: (privacy.isCameraActive && privacy.isMicActive) ? 44 : 32, height: 32)
                     .overlay(
                         Capsule()
-                            .stroke(Color.white.opacity(0.08), lineWidth: 0.5)
+                            .stroke(Color.white.opacity(isHovered ? 0.22 : 0.08), lineWidth: 0.5)
                     )
-                    .shadow(color: Color.black.opacity(0.35), radius: 6, x: 0, y: 2)
+                    .shadow(color: Color.black.opacity(0.4), radius: 6, x: 0, y: 2)
                 
-                // Indicator Dots
-                HStack(spacing: 5) {
-                    if privacy.isCameraActive {
-                        Circle()
-                            .fill(Color.green)
-                            .frame(width: 8, height: 8)
-                            .opacity(isBlinking ? 0.35 : 1.0)
+                HStack(spacing: 6) {
+                    // Micro-Peek App Name (Expands smoothly to the left on hover)
+                    if isHovered && !detectedAppName.isEmpty {
+                        HStack(spacing: 4) {
+                            Text(detectedAppName)
+                                .font(.system(size: 11, weight: .semibold, design: .rounded))
+                                .foregroundColor(.white)
+                                .lineLimit(1)
+                            
+                            Circle()
+                                .fill(Color.white.opacity(0.35))
+                                .frame(width: 3, height: 3)
+                        }
+                        .transition(.asymmetric(
+                            insertion: .move(edge: .trailing).combined(with: .opacity).combined(with: .scale(scale: 0.8)),
+                            removal: .move(edge: .trailing).combined(with: .opacity).combined(with: .scale(scale: 0.8))
+                        ))
                     }
-                    if privacy.isMicActive {
-                        Circle()
-                            .fill(Color.orange)
-                            .frame(width: 8, height: 8)
-                            .opacity(isBlinking ? 0.35 : 1.0)
+                    
+                    // Indicator Dots (Anchored to trailing)
+                    HStack(spacing: 5) {
+                        if privacy.isCameraActive {
+                            Circle()
+                                .fill(Color.green)
+                                .frame(width: 8, height: 8)
+                                .opacity(isBlinking ? 0.35 : 1.0)
+                        }
+                        if privacy.isMicActive {
+                            Circle()
+                                .fill(Color.orange)
+                                .frame(width: 8, height: 8)
+                                .opacity(isBlinking ? 0.35 : 1.0)
+                        }
                     }
                 }
-                .animation(.easeInOut(duration: 1.0).repeatForever(), value: isBlinking)
-                .onAppear {
-                    isBlinking = true
-                }
+                .padding(.horizontal, isHovered ? 10 : 8)
             }
-            .frame(height: 34, alignment: .top) // Align with compact height
-            .padding(.top, 0)
+            .frame(height: 34)
+            .fixedSize(horizontal: true, vertical: false)
         }
         .buttonStyle(PlainButtonStyle())
+        .onHover { hovering in
+            if hovering {
+                detectedAppName = privacy.resolveActiveApp()
+            }
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.72)) {
+                isHovered = hovering
+            }
+        }
         .help(tooltipText)
         .contextMenu {
             Button(LanguageManager.tr("Toggle Camera Indicator")) {
@@ -8976,15 +9137,20 @@ struct PrivacyIndicatorView: View {
                 withAnimation { privacy.toggleMic() }
             }
         }
+        .onAppear {
+            isBlinking = true
+        }
     }
     
     private var tooltipText: String {
+        let app = privacy.resolveActiveApp()
+        let prefix = LanguageManager.tr("In use by:")
         if privacy.isCameraActive && privacy.isMicActive {
-            return LanguageManager.tr("Camera & Microphone in use")
+            return "\(prefix) \(app) (\(LanguageManager.tr("Camera & Microphone")))"
         } else if privacy.isCameraActive {
-            return LanguageManager.tr("Camera in use")
+            return "\(prefix) \(app) (\(LanguageManager.tr("Camera")))"
         } else {
-            return LanguageManager.tr("Microphone in use")
+            return "\(prefix) \(app) (\(LanguageManager.tr("Microphone")))"
         }
     }
 }
@@ -9034,6 +9200,62 @@ class PrivacyMonitor: ObservableObject {
             manualMicOverride = !isMicActive
         }
         checkDevices()
+    }
+    
+    func resolveActiveApp() -> String {
+        if CameraMirrorManager.shared.isRunning || CameraMirrorManager.shared.isRecordingVideo {
+            return "Notchify"
+        }
+        
+        let ws = NSWorkspace.shared
+        let frontmost = ws.frontmostApplication
+        let frontBundle = frontmost?.bundleIdentifier?.lowercased() ?? ""
+        let frontName = frontmost?.localizedName ?? ""
+        
+        let videoAudioApps: [(keyword: String, name: String)] = [
+            ("facetime", "FaceTime"),
+            ("photobooth", "Photo Booth"),
+            ("zoom", "Zoom"),
+            ("teams", "Microsoft Teams"),
+            ("webex", "Webex"),
+            ("skype", "Skype"),
+            ("slack", "Slack"),
+            ("discord", "Discord"),
+            ("chrome", "Google Chrome"),
+            ("safari", "Safari"),
+            ("brave", "Brave"),
+            ("edge", "Microsoft Edge"),
+            ("quicktime", "QuickTime Player"),
+            ("voicememos", "Voice Memos"),
+            ("logic", "Logic Pro"),
+            ("garageband", "GarageBand"),
+            ("obs", "OBS Studio"),
+            ("telegram", "Telegram"),
+            ("whatsapp", "WhatsApp")
+        ]
+        
+        for item in videoAudioApps {
+            if frontBundle.contains(item.keyword) || frontName.lowercased().contains(item.keyword) {
+                return item.name
+            }
+        }
+        
+        let running = ws.runningApplications.filter { $0.activationPolicy == .regular }
+        for item in videoAudioApps {
+            if let matched = running.first(where: {
+                let b = $0.bundleIdentifier?.lowercased() ?? ""
+                let n = $0.localizedName?.lowercased() ?? ""
+                return b.contains(item.keyword) || n.contains(item.keyword)
+            }) {
+                return matched.localizedName ?? item.name
+            }
+        }
+        
+        if let front = frontmost, let name = front.localizedName, !name.isEmpty && name != "Finder" {
+            return name
+        }
+        
+        return isCameraActive ? LanguageManager.tr("System Camera") : LanguageManager.tr("System Microphone")
     }
     
     @objc func checkDevices() {
