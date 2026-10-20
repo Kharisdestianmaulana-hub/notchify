@@ -2803,7 +2803,7 @@ struct ContentView: View {
             if viewModel.selectedTab == .clipboard { return viewModel.clipboardItems.isEmpty ? 180 : 235 }
             if viewModel.selectedTab == .mirror { return 350 }
             if viewModel.selectedTab == .notes { return 270 }
-            if viewModel.selectedTab == .network { return 230 }
+            if viewModel.selectedTab == .network { return 245 }
             return 150
         }
         if viewModel.showBatteryHUD { return 44 }
@@ -7039,14 +7039,648 @@ class NetworkSpeedManager: ObservableObject {
     }
 }
 
+enum NetworkSubMode: String, CaseIterable {
+    case radar = "Radar"
+    case speedtest = "Speed Test"
+    
+    var localizedTitle: String {
+        switch self {
+        case .radar: return LanguageManager.tr("Radar")
+        case .speedtest: return LanguageManager.tr("Speed Test")
+        }
+    }
+}
+
+enum SpeedTestPhase: Equatable {
+    case idle
+    case pinging
+    case downloading
+    case uploading
+    case completed
+    case failed
+}
+
+class SpeedTestManager: NSObject, ObservableObject, URLSessionDataDelegate, URLSessionTaskDelegate {
+    static let shared = SpeedTestManager()
+    
+    @Published var phase: SpeedTestPhase = .idle
+    @Published var liveSpeedMbps: Double = 0.0
+    @Published var progress: Double = 0.0
+    @Published var statusMessage: String = ""
+    
+    @Published var pingResultMs: Int = 0
+    @Published var downloadResultMbps: Double = 0.0
+    @Published var uploadResultMbps: Double = 0.0
+    
+    // Historical results saved in UserDefaults
+    @Published var lastDownload: Double = UserDefaults.standard.double(forKey: "lastSpeedTestDown")
+    @Published var lastUpload: Double = UserDefaults.standard.double(forKey: "lastSpeedTestUp")
+    @Published var lastPing: Int = UserDefaults.standard.integer(forKey: "lastSpeedTestPing")
+    @Published var lastTimestamp: Double = UserDefaults.standard.double(forKey: "lastSpeedTestTime")
+    
+    private var activeSession: URLSession?
+    private var currentTask: URLSessionTask?
+    
+    private var phaseStartTime: Date = Date()
+    private var bytesTransferred: Int64 = 0
+    private var expectedTotalBytes: Int64 = 6_000_000
+    private var isCancelled: Bool = false
+    
+    override init() {
+        super.init()
+    }
+    
+    func startTest() {
+        guard phase == .idle || phase == .completed || phase == .failed else { return }
+        isCancelled = false
+        phase = .pinging
+        liveSpeedMbps = 0.0
+        progress = 0.0
+        statusMessage = LanguageManager.tr("Testing Ping...")
+        
+        runPingMeasurement { [weak self] avgPing in
+            guard let self = self, !self.isCancelled else { return }
+            self.pingResultMs = avgPing
+            self.startDownloadTest()
+        }
+    }
+    
+    func cancelTest() {
+        isCancelled = true
+        currentTask?.cancel()
+        currentTask = nil
+        activeSession?.invalidateAndCancel()
+        activeSession = nil
+        phase = .idle
+        liveSpeedMbps = 0.0
+        progress = 0.0
+        statusMessage = ""
+    }
+    
+    private func runPingMeasurement(completion: @escaping (Int) -> Void) {
+        var samples: [Int] = []
+        let group = DispatchGroup()
+        
+        for i in 0..<3 {
+            group.enter()
+            DispatchQueue.global().asyncAfter(deadline: .now() + Double(i) * 0.15) { [weak self] in
+                guard let self = self, !self.isCancelled else {
+                    group.leave()
+                    return
+                }
+                guard let url = URL(string: "https://speed.cloudflare.com/__down?bytes=0") else {
+                    group.leave()
+                    return
+                }
+                var req = URLRequest(url: url)
+                req.httpMethod = "HEAD"
+                req.timeoutInterval = 3.0
+                
+                let start = Date()
+                let task = URLSession.shared.dataTask(with: req) { _, _, _ in
+                    let ms = Int(Date().timeIntervalSince(start) * 1000)
+                    if ms > 0 { samples.append(ms) }
+                    group.leave()
+                }
+                task.resume()
+            }
+        }
+        
+        group.notify(queue: .main) { [weak self] in
+            guard let self = self, !self.isCancelled else { return }
+            let avg = samples.isEmpty ? 22 : (samples.reduce(0, +) / samples.count)
+            completion(avg)
+        }
+    }
+    
+    private func startDownloadTest() {
+        phase = .downloading
+        statusMessage = LanguageManager.tr("Testing Download...")
+        bytesTransferred = 0
+        expectedTotalBytes = 6_000_000 // 6 MB
+        phaseStartTime = Date()
+        
+        let config = URLSessionConfiguration.ephemeral
+        config.timeoutIntervalForRequest = 10.0
+        activeSession = URLSession(configuration: config, delegate: self, delegateQueue: .main)
+        
+        guard let url = URL(string: "https://speed.cloudflare.com/__down?bytes=\(expectedTotalBytes)") else {
+            failTest(reason: "Invalid URL")
+            return
+        }
+        
+        let task = activeSession?.dataTask(with: url)
+        currentTask = task
+        task?.resume()
+    }
+    
+    private func startUploadTest() {
+        phase = .uploading
+        statusMessage = LanguageManager.tr("Testing Upload...")
+        bytesTransferred = 0
+        expectedTotalBytes = 2_500_000 // 2.5 MB
+        phaseStartTime = Date()
+        
+        let dummyData = Data(count: Int(expectedTotalBytes))
+        guard let url = URL(string: "https://speed.cloudflare.com/__up") else {
+            failTest(reason: "Invalid URL")
+            return
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 10.0
+        
+        let task = activeSession?.uploadTask(with: request, from: dummyData)
+        currentTask = task
+        task?.resume()
+    }
+    
+    // MARK: - URLSessionDataDelegate
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        guard phase == .downloading, !isCancelled else { return }
+        bytesTransferred += Int64(data.count)
+        let elapsed = max(Date().timeIntervalSince(phaseStartTime), 0.05)
+        let mbps = (Double(bytesTransferred) * 8.0) / (elapsed * 1_000_000.0)
+        
+        DispatchQueue.main.async {
+            self.liveSpeedMbps = mbps
+            self.progress = min(Double(self.bytesTransferred) / Double(self.expectedTotalBytes), 0.95)
+        }
+    }
+    
+    // MARK: - URLSessionTaskDelegate
+    func urlSession(_ session: URLSession, task: URLSessionTask, didSendBodyData bytesSent: Int64, totalBytesSent: Int64, totalBytesExpectedToSend: Int64) {
+        guard phase == .uploading, !isCancelled else { return }
+        bytesTransferred = totalBytesSent
+        let elapsed = max(Date().timeIntervalSince(phaseStartTime), 0.05)
+        let mbps = (Double(totalBytesSent) * 8.0) / (elapsed * 1_000_000.0)
+        
+        DispatchQueue.main.async {
+            self.liveSpeedMbps = mbps
+            self.progress = min(Double(totalBytesSent) / Double(totalBytesExpectedToSend), 0.95)
+        }
+    }
+    
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        guard !isCancelled else { return }
+        
+        if let error = error {
+            if (error as NSError).code == NSURLErrorCancelled { return }
+            DispatchQueue.main.async {
+                self.failTest(reason: error.localizedDescription)
+            }
+            return
+        }
+        
+        DispatchQueue.main.async {
+            let elapsed = max(Date().timeIntervalSince(self.phaseStartTime), 0.05)
+            if self.phase == .downloading {
+                let finalMbps = (Double(self.bytesTransferred) * 8.0) / (elapsed * 1_000_000.0)
+                self.downloadResultMbps = max(finalMbps, 0.1)
+                self.progress = 1.0
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    guard !self.isCancelled else { return }
+                    self.startUploadTest()
+                }
+            } else if self.phase == .uploading {
+                let finalMbps = (Double(self.bytesTransferred) * 8.0) / (elapsed * 1_000_000.0)
+                self.uploadResultMbps = max(finalMbps, 0.1)
+                self.progress = 1.0
+                self.completeTest()
+            }
+        }
+    }
+    
+    private func completeTest() {
+        phase = .completed
+        statusMessage = LanguageManager.tr("Test Completed")
+        liveSpeedMbps = 0.0
+        
+        lastDownload = downloadResultMbps
+        lastUpload = uploadResultMbps
+        lastPing = pingResultMs
+        lastTimestamp = Date().timeIntervalSince1970
+        
+        UserDefaults.standard.set(lastDownload, forKey: "lastSpeedTestDown")
+        UserDefaults.standard.set(lastUpload, forKey: "lastSpeedTestUp")
+        UserDefaults.standard.set(lastPing, forKey: "lastSpeedTestPing")
+        UserDefaults.standard.set(lastTimestamp, forKey: "lastSpeedTestTime")
+    }
+    
+    private func failTest(reason: String) {
+        phase = .failed
+        statusMessage = LanguageManager.tr("Test Failed")
+        liveSpeedMbps = 0.0
+        progress = 0.0
+    }
+}
+
+struct SpeedTestGaugeView: View {
+    @ObservedObject var manager: SpeedTestManager
+    
+    private var gaugeColor: Color {
+        switch manager.phase {
+        case .downloading: return .green
+        case .uploading: return .blue
+        case .pinging: return .orange
+        case .completed: return .teal
+        default: return .cyan
+        }
+    }
+    
+    private var gaugeTrim: CGFloat {
+        switch manager.phase {
+        case .pinging: return 0.2
+        case .downloading, .uploading:
+            return CGFloat(min(max(manager.progress, 0.05), 1.0))
+        case .completed: return 1.0
+        default: return 0.0
+        }
+    }
+    
+    var body: some View {
+        ZStack {
+            // Background Track Arc
+            Circle()
+                .trim(from: 0.15, to: 0.85)
+                .stroke(Color.white.opacity(0.08), style: StrokeStyle(lineWidth: 6, lineCap: .round))
+                .frame(width: 88, height: 88)
+                .rotationEffect(.degrees(90))
+            
+            // Active Progress Arc
+            Circle()
+                .trim(from: 0.15, to: 0.15 + (0.70 * gaugeTrim))
+                .stroke(
+                    LinearGradient(
+                        colors: [gaugeColor.opacity(0.7), gaugeColor],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    style: StrokeStyle(lineWidth: 6, lineCap: .round)
+                )
+                .frame(width: 88, height: 88)
+                .rotationEffect(.degrees(90))
+                .animation(.easeInOut(duration: 0.25), value: gaugeTrim)
+            
+            // Center Metrics
+            VStack(spacing: 1) {
+                if manager.phase == .pinging {
+                    Text("Ping")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundColor(.orange)
+                    Text("...")
+                        .font(.system(size: 18, weight: .bold, design: .rounded))
+                        .foregroundColor(.white)
+                } else if manager.phase == .downloading || manager.phase == .uploading {
+                    Text(String(format: "%.1f", manager.liveSpeedMbps))
+                        .font(.system(size: 18, weight: .bold, design: .rounded))
+                        .foregroundColor(.white)
+                    Text("Mbps")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundColor(gaugeColor)
+                } else if manager.phase == .completed {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 20))
+                        .foregroundColor(.green)
+                    Text("Done")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundColor(.gray)
+                }
+            }
+        }
+    }
+}
+
+struct SpeedTestView: View {
+    @ObservedObject var manager = SpeedTestManager.shared
+    
+    private var formattedDate: String {
+        guard manager.lastTimestamp > 0 else { return "" }
+        let d = Date(timeIntervalSince1970: manager.lastTimestamp)
+        let f = DateFormatter()
+        f.dateFormat = "d MMM, HH:mm"
+        return f.string(from: d)
+    }
+    
+    var body: some View {
+        VStack(spacing: 7) {
+            if manager.phase == .idle {
+                idleView
+            } else if manager.phase == .completed {
+                completedView
+            } else if manager.phase == .failed {
+                failedView
+            } else {
+                activeTestingView
+            }
+        }
+        .frame(width: 336)
+    }
+    
+    // 1. Idle View
+    private var idleView: some View {
+        VStack(spacing: 7) {
+            if manager.lastDownload > 0 {
+                // Last benchmark card
+                VStack(spacing: 4) {
+                    HStack {
+                        Image(systemName: "clock.arrow.circlepath")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundColor(.gray)
+                        Text(LanguageManager.tr("Last Tested") + (formattedDate.isEmpty ? "" : " • \(formattedDate)"))
+                            .font(.system(size: 9, weight: .medium))
+                            .foregroundColor(.gray)
+                        Spacer()
+                    }
+                    
+                    HStack(spacing: 6) {
+                        resultMiniPill(icon: "arrow.down.circle.fill", label: "Down", value: String(format: "%.1f", manager.lastDownload), unit: "Mbps", color: .green)
+                        resultMiniPill(icon: "arrow.up.circle.fill", label: "Up", value: String(format: "%.1f", manager.lastUpload), unit: "Mbps", color: .blue)
+                        resultMiniPill(icon: "bolt.horizontal.fill", label: "Ping", value: "\(manager.lastPing)", unit: "ms", color: .orange)
+                    }
+                }
+                .padding(7)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color.white.opacity(0.05))
+                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.08), lineWidth: 0.5))
+                )
+            } else {
+                VStack(spacing: 3) {
+                    Image(systemName: "speedometer")
+                        .font(.system(size: 24))
+                        .foregroundColor(.cyan.opacity(0.8))
+                        .padding(.top, 2)
+                    Text(LanguageManager.tr("Ready to Test"))
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(.white)
+                    Text(LanguageManager.tr("Check your current download and upload speeds."))
+                        .font(.system(size: 9))
+                        .foregroundColor(.gray)
+                        .multilineTextAlignment(.center)
+                }
+                .padding(.vertical, 4)
+            }
+            
+            // Start Test Button
+            Button(action: {
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.7)) {
+                    manager.startTest()
+                }
+            }) {
+                HStack(spacing: 6) {
+                    Image(systemName: "bolt.fill")
+                        .font(.system(size: 11, weight: .bold))
+                    Text(LanguageManager.tr("Start Speed Test"))
+                        .font(.system(size: 11, weight: .bold))
+                }
+                .foregroundColor(.black)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 7)
+                .background(
+                    LinearGradient(
+                        colors: [Color(red: 0.2, green: 0.9, blue: 0.7), Color(red: 0.1, green: 0.75, blue: 0.95)],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                )
+                .clipShape(Capsule())
+                .shadow(color: Color.cyan.opacity(0.3), radius: 5, x: 0, y: 2)
+            }
+            .buttonStyle(PlainButtonStyle())
+        }
+    }
+    
+    // 2. Active Testing View (Ping, Download, Upload)
+    private var activeTestingView: some View {
+        VStack(spacing: 6) {
+            SpeedTestGaugeView(manager: manager)
+                .padding(.top, 2)
+            
+            // Status and Cancel Button
+            HStack {
+                HStack(spacing: 5) {
+                    Circle()
+                        .fill(manager.phase == .downloading ? Color.green : (manager.phase == .uploading ? Color.blue : Color.orange))
+                        .frame(width: 6, height: 6)
+                    Text(manager.statusMessage)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(.white)
+                }
+                
+                Spacer()
+                
+                Button(action: {
+                    withAnimation {
+                        manager.cancelTest()
+                    }
+                }) {
+                    HStack(spacing: 3) {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 8, weight: .bold))
+                        Text(LanguageManager.tr("Cancel"))
+                            .font(.system(size: 9, weight: .semibold))
+                    }
+                    .foregroundColor(.gray)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Capsule().fill(Color.white.opacity(0.08)))
+                }
+                .buttonStyle(PlainButtonStyle())
+            }
+            .padding(.horizontal, 6)
+        }
+    }
+    
+    // 3. Completed View
+    private var completedView: some View {
+        VStack(spacing: 7) {
+            HStack(spacing: 6) {
+                resultCard(
+                    icon: "arrow.down.circle.fill",
+                    label: LanguageManager.tr("Download"),
+                    value: String(format: "%.1f", manager.downloadResultMbps),
+                    unit: "Mbps",
+                    color: .green
+                )
+                resultCard(
+                    icon: "arrow.up.circle.fill",
+                    label: LanguageManager.tr("Upload"),
+                    value: String(format: "%.1f", manager.uploadResultMbps),
+                    unit: "Mbps",
+                    color: .blue
+                )
+                resultCard(
+                    icon: "bolt.horizontal.fill",
+                    label: LanguageManager.tr("Latency"),
+                    value: "\(manager.pingResultMs)",
+                    unit: "ms",
+                    color: .orange
+                )
+            }
+            
+            // Retest Button
+            Button(action: {
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.7)) {
+                    manager.startTest()
+                }
+            }) {
+                HStack(spacing: 5) {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 10, weight: .bold))
+                    Text(LanguageManager.tr("Test Again"))
+                        .font(.system(size: 11, weight: .bold))
+                }
+                .foregroundColor(.white)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 6)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color.white.opacity(0.12))
+                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.2), lineWidth: 0.5))
+                )
+            }
+            .buttonStyle(PlainButtonStyle())
+        }
+    }
+    
+    // 4. Failed View
+    private var failedView: some View {
+        VStack(spacing: 6) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 22))
+                .foregroundColor(.yellow)
+            Text(LanguageManager.tr("Test Failed"))
+                .font(.system(size: 11, weight: .bold))
+                .foregroundColor(.white)
+            Text(LanguageManager.tr("Please check your internet connection"))
+                .font(.system(size: 9))
+                .foregroundColor(.gray)
+            
+            Button(action: {
+                manager.startTest()
+            }) {
+                Text(LanguageManager.tr("Test Again"))
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 5)
+                    .background(Capsule().fill(Color.white.opacity(0.15)))
+            }
+            .buttonStyle(PlainButtonStyle())
+        }
+        .padding(.vertical, 8)
+    }
+    
+    private func resultMiniPill(icon: String, label: String, value: String, unit: String, color: Color) -> some View {
+        HStack(spacing: 3) {
+            Image(systemName: icon)
+                .font(.system(size: 8, weight: .bold))
+                .foregroundColor(color)
+            Text(value)
+                .font(.system(size: 10, weight: .bold, design: .rounded))
+                .foregroundColor(.white)
+            Text(unit)
+                .font(.system(size: 8, weight: .medium))
+                .foregroundColor(.gray)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 4)
+        .background(RoundedRectangle(cornerRadius: 6).fill(Color.white.opacity(0.04)))
+    }
+    
+    private func resultCard(icon: String, label: String, value: String, unit: String, color: Color) -> some View {
+        VStack(spacing: 2) {
+            HStack(spacing: 3) {
+                Image(systemName: icon)
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundColor(color)
+                Text(label)
+                    .font(.system(size: 8, weight: .medium))
+                    .foregroundColor(.gray)
+            }
+            
+            HStack(alignment: .firstTextBaseline, spacing: 2) {
+                Text(value)
+                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                    .foregroundColor(.white)
+                Text(unit)
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundColor(color)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.white.opacity(0.06))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(color.opacity(0.25), lineWidth: 0.5))
+        )
+    }
+}
+
 struct NetworkCardView: View {
     @ObservedObject var viewModel: NotchViewModel
     @StateObject private var netManager = NetworkSpeedManager.shared
+    @State private var subMode: NetworkSubMode = .radar
     @State private var showCopiedLocalIP = false
     @State private var showCopiedPublicIP = false
     
     var body: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 7) {
+            // Mode Switcher Header
+            HStack {
+                HStack(spacing: 4) {
+                    ForEach(NetworkSubMode.allCases, id: \.self) { mode in
+                        Button(action: {
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+                                subMode = mode
+                            }
+                        }) {
+                            HStack(spacing: 5) {
+                                Image(systemName: mode == .radar ? "waveform.path.ecg" : "bolt.fill")
+                                    .font(.system(size: 10, weight: .semibold))
+                                Text(mode.localizedTitle)
+                                    .font(.system(size: 11, weight: subMode == mode ? .bold : .medium))
+                            }
+                            .foregroundColor(subMode == mode ? .white : .gray)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 4)
+                            .background(
+                                Capsule()
+                                    .fill(subMode == mode ? Color.white.opacity(0.18) : Color.clear)
+                            )
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                    }
+                }
+                .padding(2)
+                .background(
+                    Capsule()
+                        .fill(Color.white.opacity(0.08))
+                )
+                
+                Spacer()
+            }
+            .frame(width: 336)
+            
+            if subMode == .radar {
+                radarContent
+            } else {
+                SpeedTestView()
+            }
+        }
+        .onAppear {
+            netManager.startMonitoring()
+        }
+        .onDisappear {
+            netManager.stopMonitoring()
+        }
+    }
+    
+    private var radarContent: some View {
+        VStack(spacing: 7) {
             // Top Row: Speedometers
             HStack(spacing: 10) {
                 // Download Meter
@@ -7205,12 +7839,6 @@ struct NetworkCardView: View {
                 )
             }
             .frame(width: 336)
-        }
-        .onAppear {
-            netManager.startMonitoring()
-        }
-        .onDisappear {
-            netManager.stopMonitoring()
         }
     }
     
@@ -7509,7 +8137,20 @@ struct LanguageManager {
         "Public IP": "IP Publik",
         "Latency": "Latensi",
         "Re-testing network...": "Menguji ulang jaringan...",
-        "IP Copied": "IP Disalin"
+        "IP Copied": "IP Disalin",
+        "Radar": "Radar",
+        "Speed Test": "Uji Kecepatan",
+        "Start Speed Test": "Mulai Uji Kecepatan",
+        "Testing Ping...": "Mengukur Ping...",
+        "Testing Download...": "Menguji Unduh...",
+        "Testing Upload...": "Menguji Unggah...",
+        "Test Completed": "Uji Selesai",
+        "Test Failed": "Gagal Menguji",
+        "Test Again": "Uji Ulang",
+        "Last Tested": "Tes Terakhir",
+        "Ready to Test": "Siap Menguji",
+        "Check your current download and upload speeds.": "Uji kecepatan unduh dan unggah jaringan Anda.",
+        "Please check your internet connection": "Periksa koneksi internet Anda"
     ]
     
     static func tr(_ key: String) -> String {

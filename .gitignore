@@ -1,3 +1,5 @@
 DerivedData/
 build/
 *.sh
+xcuserdata/
+*.xcuserdatad
