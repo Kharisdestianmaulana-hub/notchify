@@ -98,12 +98,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
     
     @objc func openSettings() {
-        if #available(macOS 13.0, *) {
-            NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
-        } else {
-            NSApp.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)
-        }
-        NSApp.activate(ignoringOtherApps: true)
+        SettingsWindowController.shared.show()
     }
 }
 
@@ -130,44 +125,137 @@ class NotchPanel: NSPanel {
         return true
     }
 }
-import SwiftUI
-import AppKit
 
-struct SettingsView: View {
-    private enum Tabs: Hashable {
-        case general, tabs, appearance, camera
+// MARK: - Settings Window Controller
+class SettingsWindowController: NSWindowController, NSWindowDelegate {
+    static let shared = SettingsWindowController()
+    
+    init() {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 560, height: 620),
+            styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        window.center()
+        window.title = LanguageManager.tr("Notchify Settings")
+        window.titlebarAppearsTransparent = true
+        window.titleVisibility = .visible
+        window.isMovableByWindowBackground = true
+        window.level = .floating // Ensures settings stays on top of other apps
+        window.isReleasedWhenClosed = false
+        window.standardWindowButton(.zoomButton)?.isHidden = true
+        
+        super.init(window: window)
+        window.delegate = self
     }
     
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+    
+    func show() {
+        window?.title = LanguageManager.tr("Notchify Settings")
+        if window?.contentView == nil {
+            window?.contentView = NSHostingView(rootView: SettingsView())
+        }
+        window?.center()
+        window?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+}
+
+struct SettingsView: View {
+    enum SettingsTab: String, CaseIterable, Identifiable {
+        case general
+        case tabs
+        case appearance
+        case camera
+        
+        var id: String { rawValue }
+        
+        var title: String {
+            switch self {
+            case .general: return LanguageManager.tr("General")
+            case .tabs: return LanguageManager.tr("Menu & Features")
+            case .appearance: return LanguageManager.tr("Appearance")
+            case .camera: return LanguageManager.tr("Camera")
+            }
+        }
+        
+        var icon: String {
+            switch self {
+            case .general: return "gearshape"
+            case .tabs: return "square.grid.2x2"
+            case .appearance: return "paintpalette"
+            case .camera: return "camera"
+            }
+        }
+    }
+    
+    @State private var selectedTab: SettingsTab = .general
     @AppStorage("appLanguage") private var appLanguage = "en"
     
     var body: some View {
-        TabView {
-            GeneralSettingsView()
-                .tabItem {
-                    Label(LanguageManager.tr("General"), systemImage: "gearshape")
+        VStack(spacing: 0) {
+            // Top Custom Tab Bar
+            HStack(spacing: 8) {
+                ForEach(SettingsTab.allCases) { tab in
+                    let isSelected = selectedTab == tab
+                    Button(action: {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.72)) {
+                            selectedTab = tab
+                        }
+                    }) {
+                        HStack(spacing: 6) {
+                            Image(systemName: tab.icon)
+                                .font(.system(size: 13, weight: isSelected ? .bold : .medium))
+                            Text(tab.title)
+                                .font(.system(size: 12, weight: isSelected ? .bold : .medium))
+                        }
+                        .foregroundColor(isSelected ? .white : .secondary)
+                        .padding(.vertical, 7)
+                        .padding(.horizontal, 14)
+                        .background(
+                            ZStack {
+                                if isSelected {
+                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                        .fill(Color.accentColor.opacity(0.85))
+                                        .shadow(color: Color.accentColor.opacity(0.3), radius: 4, x: 0, y: 1)
+                                } else {
+                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                        .fill(Color.white.opacity(0.05))
+                                }
+                            }
+                        )
+                    }
+                    .buttonStyle(PlainButtonStyle())
                 }
-                .tag(Tabs.general)
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 14)
+            .padding(.bottom, 12)
+            .background(Color(NSColor.windowBackgroundColor))
             
-            TabsSettingsView()
-                .tabItem {
-                    Label(LanguageManager.tr("Menu & Features"), systemImage: "square.grid.2x2")
+            Divider()
+            
+            // Tab Content
+            Group {
+                switch selectedTab {
+                case .general:
+                    GeneralSettingsView()
+                case .tabs:
+                    TabsSettingsView()
+                case .appearance:
+                    AppearanceSettingsView()
+                case .camera:
+                    CameraSettingsView()
                 }
-                .tag(Tabs.tabs)
-                
-            AppearanceSettingsView()
-                .tabItem {
-                    Label(LanguageManager.tr("Appearance"), systemImage: "paintpalette")
-                }
-                .tag(Tabs.appearance)
-                
-            CameraSettingsView()
-                .tabItem {
-                    Label(LanguageManager.tr("Camera"), systemImage: "camera")
-                }
-                .tag(Tabs.camera)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .padding(20)
-        .frame(width: 450, height: 520)
+        .frame(width: 560, height: 620)
+        .background(Color(NSColor.windowBackgroundColor))
     }
 }
 
@@ -178,132 +266,156 @@ struct GeneralSettingsView: View {
     @State private var isTrusted = AXIsProcessTrusted()
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            // App Branding Header
-            HStack(spacing: 12) {
-                Image("AppLogo")
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: 46, height: 46)
-                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                    .shadow(color: Color.black.opacity(0.12), radius: 2, x: 0, y: 1)
+        ScrollView(.vertical, showsIndicators: false) {
+            VStack(alignment: .leading, spacing: 14) {
+                // App Branding Header
+                HStack(spacing: 12) {
+                    Image("AppLogo")
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 44, height: 44)
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        .shadow(color: Color.black.opacity(0.12), radius: 2, x: 0, y: 1)
+                    
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 6) {
+                            Text("Notchify")
+                                .font(.system(size: 16, weight: .bold))
+                            Text("v2.0")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundColor(.secondary)
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 1)
+                                .background(Color.white.opacity(0.08))
+                                .cornerRadius(4)
+                        }
+                        Text(LanguageManager.tr("Smart Dynamic Island & Notch for macOS"))
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer()
+                }
+                .padding(.bottom, 2)
                 
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Notchify")
-                        .font(.system(size: 16, weight: .bold))
-                    Text(LanguageManager.tr("Smart Dynamic Island & Notch for macOS"))
-                        .font(.system(size: 11))
-                        .foregroundColor(.secondary)
+                // GroupBox 1: Behavior & Language
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 14) {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(LanguageManager.tr("Language"))
+                                    .font(.headline)
+                                Text(appLanguage == "id" ? "Pilih bahasa antarmuka aplikasi" : "Select app interface language")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            Spacer()
+                            Picker("", selection: $appLanguage) {
+                                Text("English").tag("en")
+                                Text("Bahasa Indonesia").tag("id")
+                            }
+                            .labelsHidden()
+                            .frame(width: 170)
+                        }
+                        
+                        Divider()
+                        
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(LanguageManager.tr("How to Open Notch"))
+                                .font(.headline)
+                            Picker("", selection: $expandTrigger) {
+                                Text(LanguageManager.tr("Hover cursor")).tag("hover")
+                                Text(LanguageManager.tr("Click directly")).tag("click")
+                            }
+                            .pickerStyle(RadioGroupPickerStyle())
+                            .labelsHidden()
+                        }
+                        
+                        Divider()
+                        
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(LanguageManager.tr("Auto-Close Speed"))
+                                    .font(.headline)
+                                Text(appLanguage == "id" ? "Jeda waktu sebelum Notch menutup otomatis" : "Delay before Notch automatically closes")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            Spacer()
+                            Picker("", selection: $autoHideDelay) {
+                                Text(LanguageManager.tr("Fast (0.1s)")).tag(0.1)
+                                Text(LanguageManager.tr("Standard (0.5s)")).tag(0.5)
+                                Text(LanguageManager.tr("Slow (1.5s)")).tag(1.5)
+                            }
+                            .labelsHidden()
+                            .frame(width: 170)
+                        }
+                    }
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                Spacer()
-            }
-            .padding(.bottom, 2)
-            
-            GroupBox {
-                VStack(alignment: .leading, spacing: 16) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text(LanguageManager.tr("Language"))
+                
+                // GroupBox 2: Keyboard Shortcut & Accessibility
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text(LanguageManager.tr("Keyboard Shortcut"))
                             .font(.headline)
-                        Picker("", selection: $appLanguage) {
-                            Text("English").tag("en")
-                            Text("Bahasa Indonesia").tag("id")
-                        }
-                        .labelsHidden()
-                        .frame(width: 200)
-                    }
-                    
-                    Divider()
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text(LanguageManager.tr("How to Open Notch"))
-                            .font(.headline)
-                        Picker("", selection: $expandTrigger) {
-                            Text(LanguageManager.tr("Hover cursor")).tag("hover")
-                            Text(LanguageManager.tr("Click directly")).tag("click")
-                        }
-                        .pickerStyle(RadioGroupPickerStyle())
-                        .labelsHidden()
-                    }
-                    
-                    Divider()
-                    
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text(LanguageManager.tr("Auto-Close Speed"))
-                            .font(.headline)
-                        Picker("", selection: $autoHideDelay) {
-                            Text(LanguageManager.tr("Fast (0.1s)")).tag(0.1)
-                            Text(LanguageManager.tr("Standard (0.5s)")).tag(0.5)
-                            Text(LanguageManager.tr("Slow (1.5s)")).tag(1.5)
-                        }
-                        .labelsHidden()
-                        .frame(width: 200)
-                    }
-                }
-                .padding(10)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            
-            GroupBox {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(LanguageManager.tr("Keyboard Shortcut"))
-                        .font(.headline)
-                    Text(LanguageManager.tr("Press Cmd + Shift + N from anywhere to toggle Notchify."))
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    
-                    HStack {
-                        Image(systemName: isTrusted ? "checkmark.shield.fill" : "exclamationmark.shield.fill")
-                            .foregroundColor(isTrusted ? .green : .orange)
-                            .font(.system(size: 16))
+                        Text(LanguageManager.tr("Press Cmd + Shift + N from anywhere to toggle Notchify."))
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        
+                        HStack {
+                            Image(systemName: isTrusted ? "checkmark.shield.fill" : "exclamationmark.shield.fill")
+                                .foregroundColor(isTrusted ? .green : .orange)
+                                .font(.system(size: 16))
+                                
+                            Text(isTrusted ? LanguageManager.tr("Accessibility Granted") : LanguageManager.tr("Accessibility Required"))
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundColor(isTrusted ? .green : .orange)
                             
-                        Text(isTrusted ? LanguageManager.tr("Accessibility Granted") : LanguageManager.tr("Accessibility Required"))
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundColor(isTrusted ? .green : .orange)
-                        
+                            Spacer()
+                            
+                            if !isTrusted {
+                                Button(LanguageManager.tr("Grant Access")) {
+                                    let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true]
+                                    AXIsProcessTrustedWithOptions(options as CFDictionary)
+                                }
+                            }
+                        }
+                        .padding(10)
+                        .background(isTrusted ? Color.green.opacity(0.1) : Color.orange.opacity(0.1))
+                        .cornerRadius(8)
+                    }
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                
+                // GroupBox 3: Onboarding Tour
+                GroupBox {
+                    HStack(spacing: 12) {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(LanguageManager.tr("Onboarding Tour"))
+                                .font(.headline)
+                            Text(LanguageManager.tr("Revisit the setup guide and feature overview."))
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
                         Spacer()
-                        
-                        if !isTrusted {
-                            Button(LanguageManager.tr("Grant Access")) {
-                                let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true]
-                                AXIsProcessTrustedWithOptions(options as CFDictionary)
+                        Button(action: {
+                            OnboardingWindowController.shared.show(force: true)
+                        }) {
+                            HStack(spacing: 6) {
+                                Image(systemName: "sparkles")
+                                Text(LanguageManager.tr("Revisit Onboarding Tour"))
                             }
                         }
                     }
                     .padding(10)
-                    .background(isTrusted ? Color.green.opacity(0.1) : Color.orange.opacity(0.1))
-                    .cornerRadius(8)
-                    .padding(.top, 4)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .padding(10)
-                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            
-            GroupBox {
-                HStack {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(LanguageManager.tr("Onboarding Tour"))
-                            .font(.headline)
-                        Text(LanguageManager.tr("Revisit the setup guide and feature overview."))
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    Spacer()
-                    Button(action: {
-                        OnboardingWindowController.shared.show(force: true)
-                    }) {
-                        HStack(spacing: 5) {
-                            Image(systemName: "sparkles")
-                            Text(LanguageManager.tr("Show Onboarding Tour"))
-                        }
-                    }
-                }
-                .padding(10)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            
-            Spacer()
+            .padding(16)
         }
-        .padding()
         .onAppear {
             isTrusted = AXIsProcessTrusted()
         }
@@ -311,11 +423,10 @@ struct GeneralSettingsView: View {
 }
 
 struct TabsSettingsView: View {
-    @AppStorage("tabOrderStr") private var tabOrderStr = "media,clipboard,dropzone,pomodoro,calculator,weather,system,agenda,mirror"
+    @AppStorage("tabOrderStr") private var tabOrderStr = "media,clipboard,dropzone,pomodoro,calculator,weather,system,agenda,mirror,notes,network"
     @AppStorage("hiddenTabsStr") private var hiddenTabsStr = ""
     @AppStorage("appLanguage") private var appLanguage = "en" 
 
-    
     @State private var tabs: [NotchTab] = []
     @State private var hiddenSet: Set<String> = []
     
@@ -323,36 +434,51 @@ struct TabsSettingsView: View {
         VStack(alignment: .leading, spacing: 10) {
             Text(LanguageManager.tr("Drag & Drop to reorder. Uncheck to hide."))
                 .font(.subheadline)
-                .foregroundColor(.gray)
+                .foregroundColor(.secondary)
+                .padding(.horizontal, 16)
+                .padding(.top, 14)
             
             List {
                 ForEach(tabs) { tab in
-                    HStack {
+                    HStack(spacing: 10) {
                         Image(systemName: "line.3.horizontal")
-                            .foregroundColor(.gray)
-                            .imageScale(.large)
-                            .padding(.trailing, 8)
+                            .foregroundColor(.gray.opacity(0.6))
+                            .font(.system(size: 13))
                             
-                        Toggle(isOn: Binding(
-                            get: { !hiddenSet.contains(tab.rawValue) },
+                        Image(systemName: tab.rawValue)
+                            .font(.system(size: 13))
+                            .foregroundColor(.accentColor)
+                            .frame(width: 22, height: 22)
+                            .background(Color.accentColor.opacity(0.12))
+                            .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+                        
+                        Text(tab.displayName)
+                            .font(.system(size: 13, weight: .medium))
+                        
+                        Spacer()
+                        
+                        Toggle("", isOn: Binding(
+                            get: { !hiddenSet.contains(tab.id) },
                             set: { isVisible in
                                 if isVisible {
-                                    hiddenSet.remove(tab.rawValue)
+                                    hiddenSet.remove(tab.id)
                                 } else {
-                                    hiddenSet.insert(tab.rawValue)
+                                    hiddenSet.insert(tab.id)
                                 }
                                 saveState()
                             }
-                        )) {
-                            Label(tab.displayName, systemImage: tab.rawValue)
-                        }
+                        ))
+                        .labelsHidden()
+                        .toggleStyle(CheckboxToggleStyle())
                     }
                     .padding(.vertical, 4)
                 }
                 .onMove(perform: move)
             }
             .listStyle(PlainListStyle())
-            .border(Color.gray.opacity(0.2), width: 1)
+            .cornerRadius(8)
+            .padding(.horizontal, 16)
+            .padding(.bottom, 16)
         }
         .onAppear(perform: loadState)
     }
@@ -361,9 +487,9 @@ struct TabsSettingsView: View {
         let order = tabOrderStr.split(separator: ",").map(String.init)
         let hidden = hiddenTabsStr.split(separator: ",").map(String.init)
         
-        hiddenSet = Set(hidden)
+        hiddenSet = Set(hidden.compactMap { NotchTab.from(string: $0)?.id })
         
-        var loadedTabs = order.compactMap { NotchTab(rawValue: $0) }
+        var loadedTabs = order.compactMap { NotchTab.from(string: $0) }
         
         for tab in NotchTab.allCases {
             if !loadedTabs.contains(tab) {
@@ -374,7 +500,7 @@ struct TabsSettingsView: View {
     }
     
     private func saveState() {
-        tabOrderStr = tabs.map { $0.rawValue }.joined(separator: ",")
+        tabOrderStr = tabs.map { $0.id }.joined(separator: ",")
         hiddenTabsStr = Array(hiddenSet).joined(separator: ",")
     }
     
@@ -392,92 +518,98 @@ struct AppearanceSettingsView: View {
     @AppStorage("appLanguage") private var appLanguage = "en" 
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            GroupBox {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text(LanguageManager.tr("Visual Effects"))
-                        .font(.headline)
-                    
-                    Toggle(isOn: $enableGlow) {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(LanguageManager.tr("Use Glow effect behind Notch"))
+        ScrollView(.vertical, showsIndicators: false) {
+            VStack(alignment: .leading, spacing: 14) {
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text(LanguageManager.tr("Visual Effects"))
+                            .font(.headline)
+                        
+                        Toggle(isOn: $enableGlow) {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(LanguageManager.tr("Use Glow effect behind Notch"))
+                                    .font(.system(size: 13, weight: .medium))
+                                Text(LanguageManager.tr("Disabling this saves CPU/GPU on older Macs."))
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                    }
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text(LanguageManager.tr("Media & Lyrics"))
+                            .font(.headline)
+                        
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(LanguageManager.tr("Preferred Music Source"))
                                 .font(.system(size: 13, weight: .medium))
-                            Text(LanguageManager.tr("Disabling this saves CPU/GPU on older Macs."))
+                            
+                            Picker("", selection: $preferredMusicPlayer) {
+                                Text(LanguageManager.tr("Auto (Detect Any Active App)")).tag("auto")
+                                Text("Spotify").tag("spotify")
+                                Text("Apple Music").tag("music")
+                                Text(LanguageManager.tr("Browser Web (YouTube Music)")).tag("browser")
+                            }
+                            .pickerStyle(MenuPickerStyle())
+                            
+                            Text(LanguageManager.tr("Preferred player to display and control when multiple music sources are active."))
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
-                    }
-                }
-                .padding(10)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            
-            GroupBox {
-                VStack(alignment: .leading, spacing: 14) {
-                    Text(LanguageManager.tr("Media & Lyrics"))
-                        .font(.headline)
-                    
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(LanguageManager.tr("Preferred Music Source"))
-                            .font(.system(size: 13, weight: .medium))
                         
-                        Picker("", selection: $preferredMusicPlayer) {
-                            Text(LanguageManager.tr("Auto (Detect Any Active App)")).tag("auto")
-                            Text("Spotify").tag("spotify")
-                            Text("Apple Music").tag("music")
-                            Text(LanguageManager.tr("Browser Web (YouTube Music)")).tag("browser")
+                        Divider()
+                        
+                        Toggle(isOn: $enableLyrics) {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(LanguageManager.tr("Search & display music lyrics"))
+                                    .font(.system(size: 13, weight: .medium))
+                                Text(LanguageManager.tr("Fetch synchronized lyrics online when playing music."))
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
                         }
-                        .pickerStyle(MenuPickerStyle())
-                        
-                        Text(LanguageManager.tr("Preferred player to display and control when multiple music sources are active."))
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
                     }
-                    
-                    Divider()
-                    
-                    Toggle(isOn: $enableLyrics) {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(LanguageManager.tr("Search & display music lyrics"))
-                                .font(.system(size: 13, weight: .medium))
-                            Text(LanguageManager.tr("Fetch synchronized lyrics online when playing music."))
-                                .font(.caption)
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack {
+                            Text(LanguageManager.tr("Glass Transparency Level"))
+                                .font(.headline)
+                            Spacer()
+                            Text("\(Int(notchOpacity * 100))%")
+                                .font(.system(size: 12, weight: .bold, design: .monospaced))
                                 .foregroundColor(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
                         }
+                            
+                        HStack(spacing: 12) {
+                            Image(systemName: "circle.dotted")
+                                .foregroundColor(.secondary)
+                                .font(.system(size: 16))
+                            
+                            Slider(value: $notchOpacity, in: 0.5...1.0)
+                            
+                            Image(systemName: "circle.fill")
+                                .foregroundColor(.secondary)
+                                .font(.system(size: 16))
+                        }
+                        .padding(.top, 2)
                     }
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .padding(10)
-                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            
-            GroupBox {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text(LanguageManager.tr("Glass Transparency Level"))
-                        .font(.headline)
-                        
-                    HStack(spacing: 12) {
-                        Image(systemName: "circle.dotted")
-                            .foregroundColor(.secondary)
-                            .font(.system(size: 16))
-                        
-                        Slider(value: $notchOpacity, in: 0.5...1.0)
-                        
-                        Image(systemName: "circle.fill")
-                            .foregroundColor(.secondary)
-                            .font(.system(size: 16))
-                    }
-                    .padding(.top, 4)
-                }
-                .padding(10)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            
-            Spacer()
+            .padding(16)
         }
-        .padding()
     }
 }
 
@@ -488,106 +620,106 @@ struct CameraSettingsView: View {
     @AppStorage("appLanguage") private var appLanguage = "en"
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            GroupBox {
-                VStack(alignment: .leading, spacing: 14) {
-                    Text(LanguageManager.tr("Photo Storage Location"))
-                        .font(.headline)
-                    
-                    VStack(alignment: .leading, spacing: 10) {
-                        // Default Folder
-                        Button(action: {
-                            photoStorageType = "default"
-                        }) {
-                            HStack(alignment: .top, spacing: 8) {
-                                Image(systemName: photoStorageType == "default" ? "largecircle.fill.circle" : "circle")
-                                    .foregroundColor(photoStorageType == "default" ? .blue : .gray)
-                                    .font(.system(size: 14))
-                                    .padding(.top, 2)
-                                
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(LanguageManager.tr("Default Folder"))
-                                        .font(.system(size: 13, weight: .medium))
-                                        .foregroundColor(.primary)
-                                    Text("~/Pictures/Notchify")
-                                        .font(.system(size: 11))
-                                        .foregroundColor(.secondary)
-                                }
-                            }
-                        }
-                        .buttonStyle(PlainButtonStyle())
+        ScrollView(.vertical, showsIndicators: false) {
+            VStack(alignment: .leading, spacing: 14) {
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text(LanguageManager.tr("Photo Storage Location"))
+                            .font(.headline)
                         
-                        Divider().padding(.vertical, 2)
-                        
-                        // Custom Folder
-                        VStack(alignment: .leading, spacing: 8) {
+                        VStack(alignment: .leading, spacing: 10) {
+                            // Default Folder
                             Button(action: {
-                                photoStorageType = "custom"
+                                photoStorageType = "default"
                             }) {
-                                HStack(spacing: 8) {
-                                    Image(systemName: photoStorageType == "custom" ? "largecircle.fill.circle" : "circle")
-                                        .foregroundColor(photoStorageType == "custom" ? .blue : .gray)
+                                HStack(alignment: .top, spacing: 8) {
+                                    Image(systemName: photoStorageType == "default" ? "largecircle.fill.circle" : "circle")
+                                        .foregroundColor(photoStorageType == "default" ? .blue : .gray)
                                         .font(.system(size: 14))
+                                        .padding(.top, 2)
                                     
-                                    Text(LanguageManager.tr("Custom Folder"))
-                                        .font(.system(size: 13, weight: .medium))
-                                        .foregroundColor(.primary)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(LanguageManager.tr("Default Folder"))
+                                            .font(.system(size: 13, weight: .medium))
+                                            .foregroundColor(.primary)
+                                        Text("~/Pictures/Notchify")
+                                            .font(.system(size: 11))
+                                            .foregroundColor(.secondary)
+                                    }
                                 }
                             }
                             .buttonStyle(PlainButtonStyle())
                             
-                            HStack(spacing: 8) {
-                                Text(customPhotoStoragePath.isEmpty ? LanguageManager.tr("No folder selected") : customPhotoStoragePath)
-                                    .font(.system(size: 11))
-                                    .foregroundColor(customPhotoStoragePath.isEmpty ? .secondary : .primary)
-                                    .lineLimit(1)
-                                    .truncationMode(.middle)
-                                    .padding(.horizontal, 8)
-                                    .padding(.vertical, 5)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .background(Color.gray.opacity(0.12))
-                                    .cornerRadius(6)
+                            Divider().padding(.vertical, 2)
+                            
+                            // Custom Folder
+                            VStack(alignment: .leading, spacing: 8) {
+                                Button(action: {
+                                    photoStorageType = "custom"
+                                }) {
+                                    HStack(spacing: 8) {
+                                        Image(systemName: photoStorageType == "custom" ? "largecircle.fill.circle" : "circle")
+                                            .foregroundColor(photoStorageType == "custom" ? .blue : .gray)
+                                            .font(.system(size: 14))
+                                        
+                                        Text(LanguageManager.tr("Custom Folder"))
+                                            .font(.system(size: 13, weight: .medium))
+                                            .foregroundColor(.primary)
+                                    }
+                                }
+                                .buttonStyle(PlainButtonStyle())
                                 
-                                Button(LanguageManager.tr("Choose Folder...")) {
-                                    chooseCustomFolder()
+                                HStack(spacing: 8) {
+                                    Text(customPhotoStoragePath.isEmpty ? LanguageManager.tr("No folder selected") : customPhotoStoragePath)
+                                        .font(.system(size: 11))
+                                        .foregroundColor(customPhotoStoragePath.isEmpty ? .secondary : .primary)
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
+                                        .padding(.horizontal, 8)
+                                        .padding(.vertical, 5)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .background(Color.gray.opacity(0.12))
+                                        .cornerRadius(6)
+                                    
+                                    Button(LanguageManager.tr("Choose Folder...")) {
+                                        chooseCustomFolder()
+                                    }
+                                }
+                                .padding(.leading, 22)
+                            }
+                        }
+                        
+                        Divider().padding(.vertical, 2)
+                        
+                        HStack {
+                            Button(action: {
+                                PhotoStorageManager.openPhotosFolder()
+                            }) {
+                                HStack(spacing: 5) {
+                                    Image(systemName: "folder")
+                                    Text(LanguageManager.tr("Open Folder in Finder"))
                                 }
                             }
-                            .padding(.leading, 22)
+                            Spacer()
                         }
                     }
-                    
-                    Divider().padding(.vertical, 2)
-                    
-                    HStack {
-                        Button(action: {
-                            PhotoStorageManager.openPhotosFolder()
-                        }) {
-                            HStack(spacing: 5) {
-                                Image(systemName: "folder")
-                                Text(LanguageManager.tr("Open Folder in Finder"))
-                            }
-                        }
-                        Spacer()
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text(LanguageManager.tr("Shutter Feedback"))
+                            .font(.headline)
+                        
+                        Toggle(LanguageManager.tr("Play Shutter Sound"), isOn: $playShutterSound)
                     }
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .padding(10)
-                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            
-            GroupBox {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text(LanguageManager.tr("Shutter Feedback"))
-                        .font(.headline)
-                    
-                    Toggle(LanguageManager.tr("Play Shutter Sound"), isOn: $playShutterSound)
-                }
-                .padding(10)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            
-            Spacer()
+            .padding(16)
         }
-        .padding()
     }
     
     private func chooseCustomFolder() {

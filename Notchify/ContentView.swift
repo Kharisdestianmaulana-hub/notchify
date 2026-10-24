@@ -3968,10 +3968,7 @@ struct ContentView: View {
                                     withAnimation(.spring(response: 0.38, dampingFraction: 0.72)) {
                                         viewModel.isExpanded = true
                                     }
-                                    let frontmost = NSWorkspace.shared.frontmostApplication
-                                    if frontmost?.bundleIdentifier != Bundle.main.bundleIdentifier {
-                                        previousApp = frontmost
-                                    }
+                                    capturePreviousApp()
                                     NSApp.activate(ignoringOtherApps: true)
                                 }
                             }
@@ -3984,7 +3981,7 @@ struct ContentView: View {
                                 withAnimation(.spring(response: 0.38, dampingFraction: 0.72)) {
                                     viewModel.isExpanded = false
                                 }
-                                previousApp?.activate(options: .activateIgnoringOtherApps)
+                                restorePreviousAppFocus()
                             }
                         }
                     }
@@ -4054,10 +4051,7 @@ struct ContentView: View {
                     withAnimation(.spring(response: 0.38, dampingFraction: 0.72)) {
                         viewModel.isExpanded = true
                     }
-                    let frontmost = NSWorkspace.shared.frontmostApplication
-                    if frontmost?.bundleIdentifier != Bundle.main.bundleIdentifier {
-                        previousApp = frontmost
-                    }
+                    capturePreviousApp()
                     NSApp.activate(ignoringOtherApps: true)
                 }
             }
@@ -4069,13 +4063,10 @@ struct ContentView: View {
                     viewModel.isExpanded.toggle()
                 }
                 if viewModel.isExpanded {
-                    let frontmost = NSWorkspace.shared.frontmostApplication
-                    if frontmost?.bundleIdentifier != Bundle.main.bundleIdentifier {
-                        previousApp = frontmost
-                    }
+                    capturePreviousApp()
                     NSApp.activate(ignoringOtherApps: true)
                 } else {
-                    previousApp?.activate(options: .activateIgnoringOtherApps)
+                    restorePreviousAppFocus()
                 }
             }
             .onChange(of: viewModel.showClock) { _ in
@@ -4132,7 +4123,7 @@ struct ContentView: View {
                             withAnimation(.spring(response: 0.38, dampingFraction: 0.72)) {
                                 viewModel.isExpanded = false
                             }
-                            previousApp?.activate(options: .activateIgnoringOtherApps)
+                            restorePreviousAppFocus()
                         }
                     }
                 }
@@ -4257,6 +4248,27 @@ struct ContentView: View {
             withAnimation(.interactiveSpring(response: 0.5, dampingFraction: 0.7, blendDuration: 0)) {
                 isHiddenByFullscreen = otherAppIsFullscreen
             }
+        }
+    }
+    
+    private func capturePreviousApp() {
+        let hasOpenWindow = NSApp.windows.contains { window in
+            window.isVisible && !(window is NotchPanel)
+        }
+        if !hasOpenWindow {
+            let frontmost = NSWorkspace.shared.frontmostApplication
+            if frontmost?.bundleIdentifier != Bundle.main.bundleIdentifier {
+                previousApp = frontmost
+            }
+        }
+    }
+    
+    private func restorePreviousAppFocus() {
+        let hasOpenWindow = NSApp.windows.contains { window in
+            window.isVisible && !(window is NotchPanel)
+        }
+        if !hasOpenWindow {
+            previousApp?.activate(options: .activateIgnoringOtherApps)
         }
     }
 }
@@ -9134,6 +9146,14 @@ struct LanguageManager {
         "Menu & Features": "Menu & Fitur",
         "Appearance": "Personalisasi",
         "Settings...": "Pengaturan...",
+        "Notchify Settings": "Pengaturan Notchify",
+        "Tab Order & Visibility": "Susunan & Visibilitas Tab",
+        "Behavior": "Perilaku Notch",
+        "Visual Style & Effects": "Gaya Visual & Efek",
+        "Storage & Feedback": "Penyimpanan & Umpan Balik",
+        "Start Tour": "Mulai Tur",
+        "Revisit Onboarding Tour": "Buka Ulang Tur Panduan",
+        "Shutter Sound Feedback": "Suara Rana Kamera",
         "Quit Notchify": "Keluar Notchify",
         "Language": "Bahasa",
         "How to Open Notch": "Cara Membuka Notch",
