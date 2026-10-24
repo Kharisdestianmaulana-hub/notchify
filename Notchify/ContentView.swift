@@ -770,23 +770,25 @@ struct ContentView: View {
         }
     }
     
-    private func capturePreviousApp() {
-        let hasOpenWindow = NSApp.windows.contains { window in
-            window.isVisible && !(window is NotchPanel)
+    private var isSettingsOrOnboardingOpen: Bool {
+        NSApp.windows.contains { window in
+            window.isVisible &&
+            window.level == .normal &&
+            !(window is NotchPanel) &&
+            !NSStringFromClass(type(of: window)).contains("StatusBar")
         }
-        if !hasOpenWindow {
-            let frontmost = NSWorkspace.shared.frontmostApplication
-            if frontmost?.bundleIdentifier != Bundle.main.bundleIdentifier {
-                previousApp = frontmost
-            }
+    }
+    
+    private func capturePreviousApp() {
+        guard !isSettingsOrOnboardingOpen else { return }
+        if let frontmost = NSWorkspace.shared.frontmostApplication,
+           frontmost.bundleIdentifier != Bundle.main.bundleIdentifier {
+            previousApp = frontmost
         }
     }
     
     private func restorePreviousAppFocus() {
-        let hasOpenWindow = NSApp.windows.contains { window in
-            window.isVisible && !(window is NotchPanel)
-        }
-        if hasOpenWindow { return }
+        guard !isSettingsOrOnboardingOpen else { return }
         
         let mouseLoc = NSEvent.mouseLocation
         let primaryScreenHeight = NSScreen.screens.first?.frame.height ?? (NSScreen.main?.frame.height ?? 1080)
@@ -822,9 +824,11 @@ struct ContentView: View {
         if !activatedTargetApp {
             if let previous = previousApp, !previous.isTerminated {
                 previous.activate(options: .activateIgnoringOtherApps)
+            } else {
+                NSApp.deactivate()
             }
+        } else {
+            NSApp.deactivate()
         }
-        
-        NSApp.deactivate()
     }
 }
