@@ -369,8 +369,8 @@ class NotchViewModel: ObservableObject {
             return event
         }
         
-        // Fast polling for instant HUD (0.3s)
-        clipboardTimer = Timer.scheduledTimer(withTimeInterval: 0.3,
+        // Smart fallback interval (1.5s) while instant checks are triggered via Cmd+C / Cmd+X
+        clipboardTimer = Timer.scheduledTimer(withTimeInterval: 1.5,
                                               repeats: true) { [weak self] _ in
             self?.checkClipboard()
         }
@@ -381,9 +381,15 @@ class NotchViewModel: ObservableObject {
             if event.keyCode == 7 { // 'x'
                 lastActionWasCut = true
                 lastActionTime = Date()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { [weak self] in
+                    self?.checkClipboard()
+                }
             } else if event.keyCode == 8 { // 'c'
                 lastActionWasCut = false
                 lastActionTime = Date()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { [weak self] in
+                    self?.checkClipboard()
+                }
             }
         }
     }
@@ -393,11 +399,13 @@ class NotchViewModel: ObservableObject {
         mediaTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
             self?.fetchMedia()
         }
-        progressTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
+        progressTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
             guard let self = self else { return }
             if self.isPlaying && self.duration > 0 {
-                self.elapsed = min(self.elapsed + 0.1, self.duration)
-                self.updateLyricIndex()
+                self.elapsed = min(self.elapsed + 0.5, self.duration)
+                if UserDefaults.standard.bool(forKey: "enableLyrics") && !self.lyrics.isEmpty {
+                    self.updateLyricIndex()
+                }
             }
         }
     }
@@ -1683,7 +1691,7 @@ struct DetachedPomodoroView: View {
         HStack(spacing: 6) {
             // Main Timer Display Button (Click opens Pomodoro tab in Notch)
             Button(action: {
-                withAnimation(.spring(response: 0.38, dampingFraction: 0.72)) {
+                withAnimation(.interactiveSpring(response: 0.36, dampingFraction: 0.76, blendDuration: 0.08)) {
                     viewModel.selectedTab = .pomodoro
                     viewModel.isExpanded = true
                 }
@@ -1742,7 +1750,7 @@ struct DetachedPomodoroView: View {
                     
                     // Stop Button
                     Button(action: {
-                        withAnimation(.spring(response: 0.38, dampingFraction: 0.72)) {
+                        withAnimation(.interactiveSpring(response: 0.36, dampingFraction: 0.76, blendDuration: 0.08)) {
                             viewModel.stopPomodoro()
                         }
                     }) {
@@ -3505,6 +3513,18 @@ struct TabPickerPopoverView: View {
     }
 }
 
+// MARK: - Performance Optimized Glow Shadow Extension
+extension View {
+    @ViewBuilder
+    func notchGlowShadow(enableGlow: Bool, isPlaying: Bool, accentColor: Color) -> some View {
+        if enableGlow && isPlaying && accentColor != .clear {
+            self.shadow(color: accentColor.opacity(0.45), radius: 24, x: 0, y: 8)
+        } else {
+            self
+        }
+    }
+}
+
 // MARK: - Notch Container View
 struct ContentView: View {
     @StateObject private var viewModel = NotchViewModel()
@@ -3703,11 +3723,9 @@ struct ContentView: View {
                             NotchShape(cornerRadius: viewModel.isExpanded ? 22 : (isBlossoming ? 18 : 12), flareRadius: 16)
                                 .stroke(Color.white.opacity(0.08), lineWidth: 0.5)
                         )
-                        .drawingGroup()
                         .shadow(color: Color.black.opacity(0.4), radius: 10, x: 0, y: 5)
-                        .shadow(color: viewModel.accentColor.opacity(enableGlow && viewModel.isPlaying ? 0.5 : 0), radius: 20, x: 0, y: 8)
-                        .shadow(color: viewModel.accentColor.opacity(enableGlow && viewModel.isPlaying ? 0.3 : 0), radius: 40, x: 0, y: 12)
-                        .animation(.easeInOut(duration: 1.0), value: viewModel.accentColor)
+                        .notchGlowShadow(enableGlow: enableGlow, isPlaying: viewModel.isPlaying, accentColor: viewModel.accentColor)
+                        .animation(.easeInOut(duration: 0.8), value: viewModel.accentColor)
                 
                 Group {
                     if viewModel.isExpanded {
@@ -3843,6 +3861,7 @@ struct ContentView: View {
                                             .transition(.scale(scale: 0.85, anchor: .top).combined(with: .opacity))
                                     }
                                 }
+                                .compositingGroup()
                                 .padding(.horizontal, 42)
                                 .padding(.top, 14)
                                 .padding(.bottom, 12)
@@ -3977,7 +3996,7 @@ struct ContentView: View {
                                     if viewModel.isPomodoroActive && isPomodoroInMainIsland {
                                         viewModel.selectedTab = .pomodoro
                                     }
-                                    withAnimation(.spring(response: 0.38, dampingFraction: 0.72)) {
+                                    withAnimation(.interactiveSpring(response: 0.36, dampingFraction: 0.76, blendDuration: 0.08)) {
                                         viewModel.isExpanded = true
                                     }
                                     capturePreviousApp()
@@ -3990,7 +4009,7 @@ struct ContentView: View {
                                 guard !viewModel.showDropSuccessHUD else { return }
                                 guard !viewModel.isPinningExpansion else { return }
                                 guard !showTabPicker else { return }
-                                withAnimation(.spring(response: 0.38, dampingFraction: 0.72)) {
+                                withAnimation(.interactiveSpring(response: 0.36, dampingFraction: 0.76, blendDuration: 0.08)) {
                                     viewModel.isExpanded = false
                                 }
                                 restorePreviousAppFocus()
@@ -4060,7 +4079,7 @@ struct ContentView: View {
                     if viewModel.isPomodoroActive && isPomodoroInMainIsland {
                         viewModel.selectedTab = .pomodoro
                     }
-                    withAnimation(.spring(response: 0.38, dampingFraction: 0.72)) {
+                    withAnimation(.interactiveSpring(response: 0.36, dampingFraction: 0.76, blendDuration: 0.08)) {
                         viewModel.isExpanded = true
                     }
                     capturePreviousApp()
@@ -4071,7 +4090,7 @@ struct ContentView: View {
                 if !viewModel.isExpanded && viewModel.isPomodoroActive && isPomodoroInMainIsland {
                     viewModel.selectedTab = .pomodoro
                 }
-                withAnimation(.spring(response: 0.38, dampingFraction: 0.72)) {
+                withAnimation(.interactiveSpring(response: 0.36, dampingFraction: 0.76, blendDuration: 0.08)) {
                     viewModel.isExpanded.toggle()
                 }
                 if viewModel.isExpanded {
@@ -4097,7 +4116,7 @@ struct ContentView: View {
             }
             .onChange(of: viewModel.isHoveringWithFile) { hovering in
                 if hovering {
-                    withAnimation(.spring(response: 0.38, dampingFraction: 0.72)) {
+                    withAnimation(.interactiveSpring(response: 0.36, dampingFraction: 0.76, blendDuration: 0.08)) {
                         viewModel.isExpanded = false
                     }
                 }
@@ -4132,7 +4151,7 @@ struct ContentView: View {
                         guard !viewModel.isHoveringWithFile else { return }
                         guard !viewModel.isPinningExpansion else { return }
                         if expandTrigger == "hover" {
-                            withAnimation(.spring(response: 0.38, dampingFraction: 0.72)) {
+                            withAnimation(.interactiveSpring(response: 0.36, dampingFraction: 0.76, blendDuration: 0.08)) {
                                 viewModel.isExpanded = false
                             }
                             restorePreviousAppFocus()
@@ -4219,46 +4238,54 @@ struct ContentView: View {
                 checkFullscreen()
             }
         }
+        .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didActivateApplicationNotification)) { _ in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                checkFullscreen()
+            }
+        }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)) { _ in
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                 checkFullscreen()
             }
         }
-        .onReceive(Timer.publish(every: 1.0, on: .main, in: .common).autoconnect()) { _ in
+        .onReceive(Timer.publish(every: 4.0, on: .main, in: .common).autoconnect()) { _ in
             checkFullscreen()
         }
     }
     
     private func checkFullscreen() {
-        guard let screen = NSScreen.main else { return }
-        let screenFrame = screen.frame
-        
-        // When an app is fullscreen, the menu bar is hidden, so visibleFrame == frame
-        // Also check if any window covers the entire screen
-        let windowList = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
-        
-        var otherAppIsFullscreen = false
-        for window in windowList {
-            guard let ownerPID = window[kCGWindowOwnerPID as String] as? Int32,
-                  let bounds = window[kCGWindowBounds as String] as? [String: CGFloat],
-                  let windowWidth = bounds["Width"],
-                  let windowHeight = bounds["Height"],
-                  let layer = window[kCGWindowLayer as String] as? Int else { continue }
+        DispatchQueue.global(qos: .userInitiated).async {
+            guard let screen = NSScreen.main else { return }
+            let screenFrame = screen.frame
             
-            // Skip our own app and menu bar / dock windows
-            if ownerPID == ProcessInfo.processInfo.processIdentifier { continue }
-            if layer != 0 { continue }
+            // Check windows in background queue so main UI thread never blocks
+            let windowList = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
             
-            // If a window covers the full screen dimensions, it's fullscreen
-            if windowWidth >= screenFrame.width && windowHeight >= screenFrame.height {
-                otherAppIsFullscreen = true
-                break
+            var otherAppIsFullscreen = false
+            for window in windowList {
+                guard let ownerPID = window[kCGWindowOwnerPID as String] as? Int32,
+                      let bounds = window[kCGWindowBounds as String] as? [String: CGFloat],
+                      let windowWidth = bounds["Width"],
+                      let windowHeight = bounds["Height"],
+                      let layer = window[kCGWindowLayer as String] as? Int else { continue }
+                
+                // Skip our own app and menu bar / dock windows
+                if ownerPID == ProcessInfo.processInfo.processIdentifier { continue }
+                if layer != 0 { continue }
+                
+                // If a window covers the full screen dimensions, it's fullscreen
+                if windowWidth >= screenFrame.width && windowHeight >= screenFrame.height {
+                    otherAppIsFullscreen = true
+                    break
+                }
             }
-        }
-        
-        if otherAppIsFullscreen != isHiddenByFullscreen {
-            withAnimation(.interactiveSpring(response: 0.5, dampingFraction: 0.7, blendDuration: 0)) {
-                isHiddenByFullscreen = otherAppIsFullscreen
+            
+            DispatchQueue.main.async {
+                if otherAppIsFullscreen != self.isHiddenByFullscreen {
+                    withAnimation(.interactiveSpring(response: 0.45, dampingFraction: 0.72, blendDuration: 0.08)) {
+                        self.isHiddenByFullscreen = otherAppIsFullscreen
+                    }
+                }
             }
         }
     }
@@ -5851,7 +5878,7 @@ struct MeetingAlertIslandView: View {
             
             // Meeting Title + Countdown (Clicking opens Notch Agenda tab)
             Button(action: {
-                withAnimation(.spring(response: 0.38, dampingFraction: 0.72)) {
+                withAnimation(.interactiveSpring(response: 0.36, dampingFraction: 0.76, blendDuration: 0.08)) {
                     viewModel.selectedTab = .agenda
                     viewModel.isExpanded = true
                 }

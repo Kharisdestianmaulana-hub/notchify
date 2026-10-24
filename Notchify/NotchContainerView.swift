@@ -55,7 +55,7 @@ struct NotchContainerView: View {
             
             // We use onHover on the Shape itself to expand it
             .onHover { isHovering in
-                withAnimation(.spring(response: 0.38, dampingFraction: 0.72)) {
+                withAnimation(.interactiveSpring(response: 0.36, dampingFraction: 0.76, blendDuration: 0.08)) {
                     viewModel.isExpanded = isHovering
                 }
             }
