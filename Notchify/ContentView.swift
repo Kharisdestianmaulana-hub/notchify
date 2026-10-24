@@ -110,20 +110,20 @@ struct ContentView: View {
 
     private var currentHeight: CGFloat {
         if viewModel.isExpanded {
-            if viewModel.selectedTab == .calculator { return 275 }
+            if viewModel.selectedTab == .calculator { return 285 }
             if viewModel.selectedTab == .media {
-                return viewModel.showMediaLyrics ? 185 : 165
+                return viewModel.showMediaLyrics ? 195 : 172
             }
-            if viewModel.selectedTab == .weather { return 165 }
-            if viewModel.selectedTab == .system { return 215 }
-            if viewModel.selectedTab == .agenda { return viewModel.isPinningExpansion ? 360 : 275 }
-            if viewModel.selectedTab == .pomodoro { return 185 }
-            if viewModel.selectedTab == .dropzone { return viewModel.stagedFiles.isEmpty ? 180 : 195 }
-            if viewModel.selectedTab == .clipboard { return viewModel.clipboardItems.isEmpty ? 180 : 235 }
-            if viewModel.selectedTab == .mirror { return 350 }
-            if viewModel.selectedTab == .notes { return 270 }
-            if viewModel.selectedTab == .network { return 245 }
-            return 150
+            if viewModel.selectedTab == .weather { return 175 }
+            if viewModel.selectedTab == .system { return 225 }
+            if viewModel.selectedTab == .agenda { return viewModel.isPinningExpansion ? 370 : 285 }
+            if viewModel.selectedTab == .pomodoro { return 195 }
+            if viewModel.selectedTab == .dropzone { return viewModel.stagedFiles.isEmpty ? 190 : 205 }
+            if viewModel.selectedTab == .clipboard { return viewModel.clipboardItems.isEmpty ? 190 : 245 }
+            if viewModel.selectedTab == .mirror { return 360 }
+            if viewModel.selectedTab == .notes { return 280 }
+            if viewModel.selectedTab == .network { return 255 }
+            return 160
         }
         if viewModel.showBatteryHUD { return 44 }
         if viewModel.showClipboardHUD { return 44 }
@@ -406,6 +406,10 @@ struct ContentView: View {
                                 }
                                 .padding(.top, 28)
                             }
+                            
+                            // Persistent Global Tab Pagination Dots across all tabs
+                            tabPaginationDotsView
+                                .padding(.bottom, 8)
                         }
                         .transition(.scale(scale: 0.01, anchor: .top))
                         .simultaneousGesture(
@@ -836,6 +840,32 @@ struct ContentView: View {
             }
         } else {
             NSApp.deactivate()
+        }
+    }
+    
+    // MARK: - Global Tab Pagination Dots (Persistent across all tabs)
+    private var tabPaginationDotsView: some View {
+        HStack(spacing: 5) {
+            ForEach(visibleTabs, id: \.self) { tab in
+                let isCurrent = tab == viewModel.selectedTab
+                Button(action: {
+                    withAnimation(.interactiveSpring(response: 0.35, dampingFraction: 0.72)) {
+                        viewModel.selectedTab = tab
+                    }
+                }) {
+                    if isCurrent {
+                        Capsule()
+                            .fill(Color.white.opacity(0.95))
+                            .frame(width: 14, height: 3.5)
+                    } else {
+                        Circle()
+                            .fill(Color.white.opacity(0.35))
+                            .frame(width: 3.5, height: 3.5)
+                    }
+                }
+                .buttonStyle(PlainButtonStyle())
+                .help(tab.displayName)
+            }
         }
     }
 }
