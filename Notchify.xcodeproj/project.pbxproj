@@ -7,6 +7,44 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		E10000000001020000000000 /* BatteryMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = E10000000001010000000000 /* BatteryMonitor.swift */; };
+		E10000000002020000000000 /* CameraMirrorManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = E10000000002010000000000 /* CameraMirrorManager.swift */; };
+		E10000000003020000000000 /* HardwareMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = E10000000003010000000000 /* HardwareMonitor.swift */; };
+		E10000000004020000000000 /* LyricsManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = E10000000004010000000000 /* LyricsManager.swift */; };
+		E10000000005020000000000 /* MediaRemoteHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = E10000000005010000000000 /* MediaRemoteHelper.swift */; };
+		E10000000006020000000000 /* NetworkSpeedManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = E10000000006010000000000 /* NetworkSpeedManager.swift */; };
+		E10000000007020000000000 /* PrivacyMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = E10000000007010000000000 /* PrivacyMonitor.swift */; };
+		E10000000008020000000000 /* SystemMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = E10000000008010000000000 /* SystemMonitor.swift */; };
+		E10000000009020000000000 /* VolumeManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = E10000000009010000000000 /* VolumeManager.swift */; };
+		E1000000000A020000000000 /* WeatherManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1000000000A010000000000 /* WeatherManager.swift */; };
+		E1000000000B020000000000 /* CameraModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1000000000B010000000000 /* CameraModel.swift */; };
+		E1000000000C020000000000 /* CustomEvent.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1000000000C010000000000 /* CustomEvent.swift */; };
+		E1000000000D020000000000 /* LyricModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1000000000D010000000000 /* LyricModel.swift */; };
+		E1000000000E020000000000 /* NotchTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1000000000E010000000000 /* NotchTab.swift */; };
+		E1000000000F020000000000 /* NotchViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1000000000F010000000000 /* NotchViewModel.swift */; };
+		E10000000010020000000000 /* NotesModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = E10000000010010000000000 /* NotesModel.swift */; };
+		E10000000011020000000000 /* AppKitBridgeViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = E10000000011010000000000 /* AppKitBridgeViews.swift */; };
+		E10000000012020000000000 /* LanguageManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = E10000000012010000000000 /* LanguageManager.swift */; };
+		E10000000013020000000000 /* SmartClipboardDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = E10000000013010000000000 /* SmartClipboardDetector.swift */; };
+		E10000000014020000000000 /* ViewModifiers.swift in Sources */ = {isa = PBXBuildFile; fileRef = E10000000014010000000000 /* ViewModifiers.swift */; };
+		E10000000015020000000000 /* AgendaCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E10000000015010000000000 /* AgendaCardView.swift */; };
+		E10000000016020000000000 /* CalculatorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E10000000016010000000000 /* CalculatorView.swift */; };
+		E10000000017020000000000 /* ClipboardStackView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E10000000017010000000000 /* ClipboardStackView.swift */; };
+		E10000000018020000000000 /* DropZoneCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E10000000018010000000000 /* DropZoneCardView.swift */; };
+		E10000000019020000000000 /* MediaCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E10000000019010000000000 /* MediaCardView.swift */; };
+		E1000000001A020000000000 /* MirrorCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1000000001A010000000000 /* MirrorCardView.swift */; };
+		E1000000001B020000000000 /* NetworkCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1000000001B010000000000 /* NetworkCardView.swift */; };
+		E1000000001C020000000000 /* NotesCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1000000001C010000000000 /* NotesCardView.swift */; };
+		E1000000001D020000000000 /* PomodoroTimerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1000000001D010000000000 /* PomodoroTimerView.swift */; };
+		E1000000001E020000000000 /* SystemMonitorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1000000001E010000000000 /* SystemMonitorView.swift */; };
+		E1000000001F020000000000 /* TabPickerPopoverView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1000000001F010000000000 /* TabPickerPopoverView.swift */; };
+		E10000000020020000000000 /* WeatherCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E10000000020010000000000 /* WeatherCardView.swift */; };
+		E10000000021020000000000 /* BlossomHUDViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = E10000000021010000000000 /* BlossomHUDViews.swift */; };
+		E10000000022020000000000 /* SideIslandViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = E10000000022010000000000 /* SideIslandViews.swift */; };
+		E10000000023020000000000 /* MarqueeText.swift in Sources */ = {isa = PBXBuildFile; fileRef = E10000000023010000000000 /* MarqueeText.swift */; };
+		E10000000024020000000000 /* NotchShape.swift in Sources */ = {isa = PBXBuildFile; fileRef = E10000000024010000000000 /* NotchShape.swift */; };
+		E10000000025020000000000 /* SparklineView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E10000000025010000000000 /* SparklineView.swift */; };
+		E10000000026020000000000 /* WaveformView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E10000000026010000000000 /* WaveformView.swift */; };
 		D528863F3060BD0A001B8172 /* NotchifyApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = D528863E3060BD0A001B8172 /* NotchifyApp.swift */; };
 		D52886413060BD0A001B8172 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D52886403060BD0A001B8172 /* ContentView.swift */; };
 		D52886433060BD0D001B8172 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = D52886423060BD0D001B8172 /* Assets.xcassets */; };
@@ -34,6 +72,44 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		E10000000001010000000000 /* BatteryMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Managers/BatteryMonitor.swift"; sourceTree = "<group>"; };
+		E10000000002010000000000 /* CameraMirrorManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Managers/CameraMirrorManager.swift"; sourceTree = "<group>"; };
+		E10000000003010000000000 /* HardwareMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Managers/HardwareMonitor.swift"; sourceTree = "<group>"; };
+		E10000000004010000000000 /* LyricsManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Managers/LyricsManager.swift"; sourceTree = "<group>"; };
+		E10000000005010000000000 /* MediaRemoteHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Managers/MediaRemoteHelper.swift"; sourceTree = "<group>"; };
+		E10000000006010000000000 /* NetworkSpeedManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Managers/NetworkSpeedManager.swift"; sourceTree = "<group>"; };
+		E10000000007010000000000 /* PrivacyMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Managers/PrivacyMonitor.swift"; sourceTree = "<group>"; };
+		E10000000008010000000000 /* SystemMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Managers/SystemMonitor.swift"; sourceTree = "<group>"; };
+		E10000000009010000000000 /* VolumeManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Managers/VolumeManager.swift"; sourceTree = "<group>"; };
+		E1000000000A010000000000 /* WeatherManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Managers/WeatherManager.swift"; sourceTree = "<group>"; };
+		E1000000000B010000000000 /* CameraModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Models/CameraModel.swift"; sourceTree = "<group>"; };
+		E1000000000C010000000000 /* CustomEvent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Models/CustomEvent.swift"; sourceTree = "<group>"; };
+		E1000000000D010000000000 /* LyricModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Models/LyricModel.swift"; sourceTree = "<group>"; };
+		E1000000000E010000000000 /* NotchTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Models/NotchTab.swift"; sourceTree = "<group>"; };
+		E1000000000F010000000000 /* NotchViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Models/NotchViewModel.swift"; sourceTree = "<group>"; };
+		E10000000010010000000000 /* NotesModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Models/NotesModel.swift"; sourceTree = "<group>"; };
+		E10000000011010000000000 /* AppKitBridgeViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Utilities/AppKitBridgeViews.swift"; sourceTree = "<group>"; };
+		E10000000012010000000000 /* LanguageManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Utilities/LanguageManager.swift"; sourceTree = "<group>"; };
+		E10000000013010000000000 /* SmartClipboardDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Utilities/SmartClipboardDetector.swift"; sourceTree = "<group>"; };
+		E10000000014010000000000 /* ViewModifiers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Utilities/ViewModifiers.swift"; sourceTree = "<group>"; };
+		E10000000015010000000000 /* AgendaCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Views/Cards/AgendaCardView.swift"; sourceTree = "<group>"; };
+		E10000000016010000000000 /* CalculatorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Views/Cards/CalculatorView.swift"; sourceTree = "<group>"; };
+		E10000000017010000000000 /* ClipboardStackView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Views/Cards/ClipboardStackView.swift"; sourceTree = "<group>"; };
+		E10000000018010000000000 /* DropZoneCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Views/Cards/DropZoneCardView.swift"; sourceTree = "<group>"; };
+		E10000000019010000000000 /* MediaCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Views/Cards/MediaCardView.swift"; sourceTree = "<group>"; };
+		E1000000001A010000000000 /* MirrorCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Views/Cards/MirrorCardView.swift"; sourceTree = "<group>"; };
+		E1000000001B010000000000 /* NetworkCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Views/Cards/NetworkCardView.swift"; sourceTree = "<group>"; };
+		E1000000001C010000000000 /* NotesCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Views/Cards/NotesCardView.swift"; sourceTree = "<group>"; };
+		E1000000001D010000000000 /* PomodoroTimerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Views/Cards/PomodoroTimerView.swift"; sourceTree = "<group>"; };
+		E1000000001E010000000000 /* SystemMonitorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Views/Cards/SystemMonitorView.swift"; sourceTree = "<group>"; };
+		E1000000001F010000000000 /* TabPickerPopoverView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Views/Cards/TabPickerPopoverView.swift"; sourceTree = "<group>"; };
+		E10000000020010000000000 /* WeatherCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Views/Cards/WeatherCardView.swift"; sourceTree = "<group>"; };
+		E10000000021010000000000 /* BlossomHUDViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Views/HUDs/BlossomHUDViews.swift"; sourceTree = "<group>"; };
+		E10000000022010000000000 /* SideIslandViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Views/HUDs/SideIslandViews.swift"; sourceTree = "<group>"; };
+		E10000000023010000000000 /* MarqueeText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Views/Shapes/MarqueeText.swift"; sourceTree = "<group>"; };
+		E10000000024010000000000 /* NotchShape.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Views/Shapes/NotchShape.swift"; sourceTree = "<group>"; };
+		E10000000025010000000000 /* SparklineView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Views/Shapes/SparklineView.swift"; sourceTree = "<group>"; };
+		E10000000026010000000000 /* WaveformView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Views/Shapes/WaveformView.swift"; sourceTree = "<group>"; };
 		D528863B3060BD0A001B8172 /* Notchify.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Notchify.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		D528863E3060BD0A001B8172 /* NotchifyApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotchifyApp.swift; sourceTree = "<group>"; };
 		D52886403060BD0A001B8172 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
@@ -96,6 +172,44 @@
 			isa = PBXGroup;
 			children = (
 				D528863E3060BD0A001B8172 /* NotchifyApp.swift */,
+				E10000000001010000000000 /* BatteryMonitor.swift */,
+				E10000000002010000000000 /* CameraMirrorManager.swift */,
+				E10000000003010000000000 /* HardwareMonitor.swift */,
+				E10000000004010000000000 /* LyricsManager.swift */,
+				E10000000005010000000000 /* MediaRemoteHelper.swift */,
+				E10000000006010000000000 /* NetworkSpeedManager.swift */,
+				E10000000007010000000000 /* PrivacyMonitor.swift */,
+				E10000000008010000000000 /* SystemMonitor.swift */,
+				E10000000009010000000000 /* VolumeManager.swift */,
+				E1000000000A010000000000 /* WeatherManager.swift */,
+				E1000000000B010000000000 /* CameraModel.swift */,
+				E1000000000C010000000000 /* CustomEvent.swift */,
+				E1000000000D010000000000 /* LyricModel.swift */,
+				E1000000000E010000000000 /* NotchTab.swift */,
+				E1000000000F010000000000 /* NotchViewModel.swift */,
+				E10000000010010000000000 /* NotesModel.swift */,
+				E10000000011010000000000 /* AppKitBridgeViews.swift */,
+				E10000000012010000000000 /* LanguageManager.swift */,
+				E10000000013010000000000 /* SmartClipboardDetector.swift */,
+				E10000000014010000000000 /* ViewModifiers.swift */,
+				E10000000015010000000000 /* AgendaCardView.swift */,
+				E10000000016010000000000 /* CalculatorView.swift */,
+				E10000000017010000000000 /* ClipboardStackView.swift */,
+				E10000000018010000000000 /* DropZoneCardView.swift */,
+				E10000000019010000000000 /* MediaCardView.swift */,
+				E1000000001A010000000000 /* MirrorCardView.swift */,
+				E1000000001B010000000000 /* NetworkCardView.swift */,
+				E1000000001C010000000000 /* NotesCardView.swift */,
+				E1000000001D010000000000 /* PomodoroTimerView.swift */,
+				E1000000001E010000000000 /* SystemMonitorView.swift */,
+				E1000000001F010000000000 /* TabPickerPopoverView.swift */,
+				E10000000020010000000000 /* WeatherCardView.swift */,
+				E10000000021010000000000 /* BlossomHUDViews.swift */,
+				E10000000022010000000000 /* SideIslandViews.swift */,
+				E10000000023010000000000 /* MarqueeText.swift */,
+				E10000000024010000000000 /* NotchShape.swift */,
+				E10000000025010000000000 /* SparklineView.swift */,
+				E10000000026010000000000 /* WaveformView.swift */,
 				D52886403060BD0A001B8172 /* ContentView.swift */,
 				D52886423060BD0D001B8172 /* Assets.xcassets */,
 				D52886473060BD0D001B8172 /* Notchify.entitlements */,
@@ -261,6 +375,44 @@
 			files = (
 				D52886413060BD0A001B8172 /* ContentView.swift in Sources */,
 				D528863F3060BD0A001B8172 /* NotchifyApp.swift in Sources */,
+				E10000000001020000000000 /* BatteryMonitor.swift in Sources */,
+				E10000000002020000000000 /* CameraMirrorManager.swift in Sources */,
+				E10000000003020000000000 /* HardwareMonitor.swift in Sources */,
+				E10000000004020000000000 /* LyricsManager.swift in Sources */,
+				E10000000005020000000000 /* MediaRemoteHelper.swift in Sources */,
+				E10000000006020000000000 /* NetworkSpeedManager.swift in Sources */,
+				E10000000007020000000000 /* PrivacyMonitor.swift in Sources */,
+				E10000000008020000000000 /* SystemMonitor.swift in Sources */,
+				E10000000009020000000000 /* VolumeManager.swift in Sources */,
+				E1000000000A020000000000 /* WeatherManager.swift in Sources */,
+				E1000000000B020000000000 /* CameraModel.swift in Sources */,
+				E1000000000C020000000000 /* CustomEvent.swift in Sources */,
+				E1000000000D020000000000 /* LyricModel.swift in Sources */,
+				E1000000000E020000000000 /* NotchTab.swift in Sources */,
+				E1000000000F020000000000 /* NotchViewModel.swift in Sources */,
+				E10000000010020000000000 /* NotesModel.swift in Sources */,
+				E10000000011020000000000 /* AppKitBridgeViews.swift in Sources */,
+				E10000000012020000000000 /* LanguageManager.swift in Sources */,
+				E10000000013020000000000 /* SmartClipboardDetector.swift in Sources */,
+				E10000000014020000000000 /* ViewModifiers.swift in Sources */,
+				E10000000015020000000000 /* AgendaCardView.swift in Sources */,
+				E10000000016020000000000 /* CalculatorView.swift in Sources */,
+				E10000000017020000000000 /* ClipboardStackView.swift in Sources */,
+				E10000000018020000000000 /* DropZoneCardView.swift in Sources */,
+				E10000000019020000000000 /* MediaCardView.swift in Sources */,
+				E1000000001A020000000000 /* MirrorCardView.swift in Sources */,
+				E1000000001B020000000000 /* NetworkCardView.swift in Sources */,
+				E1000000001C020000000000 /* NotesCardView.swift in Sources */,
+				E1000000001D020000000000 /* PomodoroTimerView.swift in Sources */,
+				E1000000001E020000000000 /* SystemMonitorView.swift in Sources */,
+				E1000000001F020000000000 /* TabPickerPopoverView.swift in Sources */,
+				E10000000020020000000000 /* WeatherCardView.swift in Sources */,
+				E10000000021020000000000 /* BlossomHUDViews.swift in Sources */,
+				E10000000022020000000000 /* SideIslandViews.swift in Sources */,
+				E10000000023020000000000 /* MarqueeText.swift in Sources */,
+				E10000000024020000000000 /* NotchShape.swift in Sources */,
+				E10000000025020000000000 /* SparklineView.swift in Sources */,
+				E10000000026020000000000 /* WaveformView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
