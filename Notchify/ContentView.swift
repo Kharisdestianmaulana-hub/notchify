@@ -751,56 +751,94 @@ struct ContentView: View {
             checkFullscreen()
             updatePomodoroPlacement(isPlaying: viewModel.isPlaying, isPomodoroActive: viewModel.isPomodoroActive, animated: false)
         }
-        .onReceive(NotificationCenter.default.publisher(for: NSWorkspace.activeSpaceDidChangeNotification)) { _ in
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+        .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.activeSpaceDidChangeNotification)) { _ in
+            checkFullscreen()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
                 checkFullscreen()
             }
         }
         .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didActivateApplicationNotification)) { _ in
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+            checkFullscreen()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
                 checkFullscreen()
             }
+        }
+        .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didDeactivateApplicationNotification)) { _ in
+            checkFullscreen()
+        }
+        .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didHideApplicationNotification)) { _ in
+            checkFullscreen()
+        }
+        .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didUnhideApplicationNotification)) { _ in
+            checkFullscreen()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)) { _ in
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                checkFullscreen()
-            }
+            checkFullscreen()
         }
-        .onReceive(Timer.publish(every: 4.0, on: .main, in: .common).autoconnect()) { _ in
+        .onReceive(Timer.publish(every: 0.5, on: .main, in: .common).autoconnect()) { _ in
             checkFullscreen()
         }
     }
     
     private func checkFullscreen() {
-        DispatchQueue.global(qos: .userInitiated).async {
+        DispatchQueue.global(qos: .userInteractive).async {
             guard let screen = NSScreen.main else { return }
             let screenFrame = screen.frame
             
-            // Check windows in background queue so main UI thread never blocks
+            // 1. Identify the frontmost active application
+            guard let frontmostApp = NSWorkspace.shared.frontmostApplication else { return }
+            
+            // If Notchify itself is frontmost (e.g. user clicked notch), do not change state
+            if frontmostApp.bundleIdentifier == Bundle.main.bundleIdentifier {
+                return
+            }
+            
+            // If user switched to Finder, they are on the desktop workspace
+            if frontmostApp.bundleIdentifier == "com.apple.finder" {
+                DispatchQueue.main.async {
+                    if self.isHiddenByFullscreen {
+                        withAnimation(.interactiveSpring(response: 0.35, dampingFraction: 0.75, blendDuration: 0.08)) {
+                            self.isHiddenByFullscreen = false
+                        }
+                    }
+                }
+                return
+            }
+            
+            let frontPID = frontmostApp.processIdentifier
             let windowList = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
             
             var otherAppIsFullscreen = false
+            
+            // Evaluate topmost normal window (layer 0)
             for window in windowList {
                 guard let ownerPID = window[kCGWindowOwnerPID as String] as? Int32,
+                      let layer = window[kCGWindowLayer as String] as? Int,
                       let bounds = window[kCGWindowBounds as String] as? [String: CGFloat],
                       let windowWidth = bounds["Width"],
-                      let windowHeight = bounds["Height"],
-                      let layer = window[kCGWindowLayer as String] as? Int else { continue }
+                      let windowHeight = bounds["Height"] else { continue }
                 
-                // Skip our own app and menu bar / dock windows
+                // Skip Notchify's own windows
                 if ownerPID == ProcessInfo.processInfo.processIdentifier { continue }
+                // Only evaluate standard application windows (layer 0)
                 if layer != 0 { continue }
                 
-                // If a window covers the full screen dimensions, it's fullscreen
-                if windowWidth >= screenFrame.width && windowHeight >= screenFrame.height {
-                    otherAppIsFullscreen = true
-                    break
+                // The first layer-0 window we encounter is the topmost window on screen
+                let coversScreen = (windowWidth >= screenFrame.width - 4 && windowHeight >= screenFrame.height - 4)
+                
+                if ownerPID == frontPID {
+                    // The frontmost app's window is evaluated
+                    otherAppIsFullscreen = coversScreen
+                } else {
+                    // Topmost window covers the screen
+                    otherAppIsFullscreen = coversScreen
                 }
+                break // Only evaluate the topmost window; do not loop through background windows!
             }
             
             DispatchQueue.main.async {
                 if otherAppIsFullscreen != self.isHiddenByFullscreen {
-                    withAnimation(.interactiveSpring(response: 0.45, dampingFraction: 0.72, blendDuration: 0.08)) {
+                    withAnimation(.interactiveSpring(response: 0.35, dampingFraction: 0.75, blendDuration: 0.08)) {
                         self.isHiddenByFullscreen = otherAppIsFullscreen
                     }
                 }
