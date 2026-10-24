@@ -211,7 +211,6 @@ struct LanguageManager {
         "Notchify needs a few permissions to provide seamless controls. You can grant them now or later in Settings.": "Notchify membutuhkan beberapa izin agar semua fitur berjalan mulus. Anda bisa mengizinkannya sekarang atau nanti di Pengaturan.",
         "Accessibility Access": "Akses Aksesibilitas",
         "Required for global shortcut (Cmd+Shift+N) and Notch interaction": "Diperlukan untuk pintasan keyboard (Cmd+Shift+N) dan interaksi Notch",
-        "Camera & Microphone": "Kamera & Mikrofon",
         "For quick webcam mirror, photo snapshots, and video clips": "Untuk cermin webcam kilat, snapshot foto, dan rekaman klip video",
         "Music Automation": "Otomatisasi Musik",
         "To display current song and control Spotify & Apple Music": "Untuk menampilkan lagu yang sedang diputar dan mengontrol Spotify & Apple Music",
@@ -302,7 +301,9 @@ struct LanguageManager {
         "Close Lyrics": "Tutup Lirik",
         "No lyrics available": "Lirik tidak tersedia",
         "Search": "Cari",
-        "Lyrics": "Lirik"
+        "Lyrics": "Lirik",
+        "Open Camera": "Buka Kamera",
+        "Recording: Click to view, or stop": "Merekam: Klik untuk melihat atau hentikan"
     ]
     
     static func tr(_ key: String) -> String {

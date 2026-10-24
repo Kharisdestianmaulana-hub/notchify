@@ -81,7 +81,9 @@ struct MirrorCardView: View {
             cameraManager.loadLatestMedia()
         }
         .onDisappear {
-            cameraManager.stopSession()
+            if !cameraManager.isRecordingVideo {
+                cameraManager.stopSession()
+            }
             isViewingMedia = false
         }
         .onReceive(cameraManager.$shouldOpenMediaViewer) { shouldOpen in

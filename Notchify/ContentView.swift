@@ -5,6 +5,7 @@ import AppKit
 struct ContentView: View {
     @StateObject private var viewModel = NotchViewModel()
     @ObservedObject private var privacy = PrivacyMonitor.shared
+    @ObservedObject private var cameraManager = CameraMirrorManager.shared
     
     @AppStorage("enableGlow") private var enableGlow = false
     @AppStorage("enableLyrics") private var enableLyrics = false
@@ -620,15 +621,22 @@ struct ContentView: View {
                 }
             }
             .onChange(of: viewModel.selectedTab) { newTab in
-                if newTab != .mirror {
+                if newTab != .mirror && !cameraManager.isRecordingVideo {
                     CameraMirrorManager.shared.stopSession()
                 }
             }
             .onChange(of: viewModel.isExpanded) { isExpanded in
                 if !isExpanded {
                     showTabPicker = false
-                    CameraMirrorManager.shared.stopSession()
+                    if !cameraManager.isRecordingVideo {
+                        CameraMirrorManager.shared.stopSession()
+                    }
                     restorePreviousAppFocus()
+                }
+            }
+            .onChange(of: cameraManager.isRecordingVideo) { isRecording in
+                if !isRecording && (!viewModel.isExpanded || viewModel.selectedTab != .mirror) {
+                    cameraManager.stopSession()
                 }
             }
             .onChange(of: showTabPicker) { isOpen in
@@ -657,8 +665,25 @@ struct ContentView: View {
                 updatePomodoroPlacement(isPlaying: viewModel.isPlaying, isPomodoroActive: viewModel.isPomodoroActive)
             } // End of Main Notch ZStack
             
+            // Left Detached Video Recording Island (Active when collapsed & recording video)
+            if cameraManager.isRecordingVideo && !viewModel.isExpanded {
+                let sideIslandGap: CGFloat = 28
+                let sideIslandY: CGFloat = 3.5
+                VideoRecordingIslandView(viewModel: viewModel, cameraManager: cameraManager)
+                    .frame(width: 250, alignment: .trailing)
+                    .offset(x: -(currentWidth / 2) - sideIslandGap - 125, y: isHiddenByFullscreen ? -80 : sideIslandY)
+                    .transition(.asymmetric(
+                        insertion: .move(edge: .trailing).combined(with: .scale(scale: 0.8)).combined(with: .opacity),
+                        removal: .move(edge: .trailing).combined(with: .scale(scale: 0.8)).combined(with: .opacity)
+                    ))
+                    .animation(.interactiveSpring(response: 0.5, dampingFraction: 0.55, blendDuration: 0), value: currentWidth)
+                    .animation(.interactiveSpring(response: 0.5, dampingFraction: 0.6), value: cameraManager.isRecordingVideo)
+                    .opacity(isHiddenByFullscreen ? 0 : notchOpacity)
+            }
+            
             // Left Privacy Indicator (Camera & Microphone Island) - Repels outward on blossom & expansion
-            if privacy.isCameraActive || privacy.isMicActive {
+            // Only displayed when video recording island is NOT active to avoid duplicate/overlapping indicators
+            if (privacy.isCameraActive || privacy.isMicActive) && !(cameraManager.isRecordingVideo && !viewModel.isExpanded) {
                 let sideIslandGap: CGFloat = 28
                 let sideIslandY: CGFloat = 3.5
                 PrivacyIndicatorView()
@@ -696,14 +721,15 @@ struct ContentView: View {
                 let sideIslandGap: CGFloat = 28
                 let sideIslandY: CGFloat = 3.5
                 let isPomodoroOnRight = viewModel.isPomodoroActive && !viewModel.showTimesUp && !isPomodoroInMainIsland
-                let isPrivacyActive = privacy.isCameraActive || privacy.isMicActive
+                let isLeftOccupied = (privacy.isCameraActive || privacy.isMicActive) || cameraManager.isRecordingVideo
+                let leftExtraOffset: CGFloat = cameraManager.isRecordingVideo ? 85 : ((privacy.isCameraActive || privacy.isMicActive) ? 60 : 0)
                 let meetingIslandWidth: CGFloat = 300
                 
                 MeetingAlertIslandView(viewModel: viewModel, event: meeting)
                     .frame(width: meetingIslandWidth, alignment: isPomodoroOnRight ? .trailing : .leading)
                     .offset(
                         x: isPomodoroOnRight
-                            ? (-(currentWidth / 2) - sideIslandGap - (isPrivacyActive ? 60 : 0) - (meetingIslandWidth / 2))
+                            ? (-(currentWidth / 2) - sideIslandGap - leftExtraOffset - (meetingIslandWidth / 2))
                             : ((currentWidth / 2) + sideIslandGap + (meetingIslandWidth / 2)),
                         y: isHiddenByFullscreen ? -80 : sideIslandY
                     )

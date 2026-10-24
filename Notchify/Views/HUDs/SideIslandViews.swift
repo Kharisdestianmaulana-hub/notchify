@@ -352,3 +352,109 @@ struct PrivacyIndicatorView: View {
         }
     }
 }
+
+// MARK: - Detached Video Recording Island (Left Island)
+struct VideoRecordingIslandView: View {
+    @ObservedObject var viewModel: NotchViewModel
+    @ObservedObject var cameraManager = CameraMirrorManager.shared
+    @State private var isPulsing: Bool = false
+    @State private var isHovered: Bool = false
+    @State private var isStopHovered: Bool = false
+    
+    var body: some View {
+        HStack(spacing: 7) {
+            // Main Button: Click expands Notch into Mirror tab
+            Button(action: {
+                withAnimation(.interactiveSpring(response: 0.36, dampingFraction: 0.76, blendDuration: 0.08)) {
+                    viewModel.selectedTab = .mirror
+                    viewModel.isExpanded = true
+                }
+            }) {
+                HStack(spacing: 6) {
+                    // Glowing / Pulsing Red Recording Dot
+                    Circle()
+                        .fill(Color.red)
+                        .frame(width: 8, height: 8)
+                        .scaleEffect(isPulsing ? 1.15 : 0.85)
+                        .opacity(isPulsing ? 1.0 : 0.4)
+                        .shadow(color: Color.red.opacity(isPulsing ? 0.7 : 0.2), radius: 3)
+                        .animation(.easeInOut(duration: 0.75).repeatForever(autoreverses: true), value: isPulsing)
+                    
+                    // Recording Duration (mm:ss)
+                    Text(timeString(from: cameraManager.recordingElapsedSeconds))
+                        .font(.system(size: 11.5, weight: .semibold, design: .rounded).monospacedDigit())
+                        .foregroundColor(.white)
+                }
+            }
+            .buttonStyle(PlainButtonStyle())
+            
+            // Stop Recording Button
+            Button(action: {
+                withAnimation(.interactiveSpring(response: 0.36, dampingFraction: 0.76, blendDuration: 0.08)) {
+                    cameraManager.stopVideoRecording()
+                }
+            }) {
+                ZStack {
+                    Circle()
+                        .fill(isStopHovered ? Color.red.opacity(0.35) : Color.white.opacity(0.12))
+                        .frame(width: 18, height: 18)
+                        .overlay(
+                            Circle()
+                                .stroke(Color.red.opacity(isStopHovered ? 0.6 : 0.25), lineWidth: 0.5)
+                        )
+                    
+                    Image(systemName: "stop.fill")
+                        .font(.system(size: 7.5, weight: .bold))
+                        .foregroundColor(isStopHovered ? .white : Color(red: 1.0, green: 0.35, blue: 0.35))
+                }
+                .scaleEffect(isStopHovered ? 1.08 : 1.0)
+            }
+            .buttonStyle(PlainButtonStyle())
+            .onHover { h in
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    isStopHovered = h
+                }
+            }
+            .help(LanguageManager.tr("Stop Recording"))
+        }
+        .padding(.horizontal, 9)
+        .frame(height: 26)
+        .background(Color.black)
+        .clipShape(Capsule())
+        .overlay(
+            Capsule()
+                .stroke(Color.red.opacity(isHovered ? 0.45 : 0.22), lineWidth: 0.5)
+        )
+        .shadow(color: Color.black.opacity(0.35), radius: 5, x: 0, y: 2)
+        .onAppear {
+            isPulsing = true
+        }
+        .onHover { hovering in
+            withAnimation(.interactiveSpring(response: 0.36, dampingFraction: 0.76)) {
+                isHovered = hovering
+            }
+        }
+        .help(LanguageManager.tr("Recording: Click to view, or stop"))
+        .contextMenu {
+            Button(LanguageManager.tr("Open Camera")) {
+                withAnimation(.interactiveSpring(response: 0.36, dampingFraction: 0.76, blendDuration: 0.08)) {
+                    viewModel.selectedTab = .mirror
+                    viewModel.isExpanded = true
+                }
+            }
+            Divider()
+            Button(LanguageManager.tr("Stop Recording")) {
+                withAnimation {
+                    cameraManager.stopVideoRecording()
+                }
+            }
+        }
+    }
+    
+    private func timeString(from seconds: Int) -> String {
+        let m = seconds / 60
+        let s = seconds % 60
+        return String(format: "%02d:%02d", m, s)
+    }
+}
+
