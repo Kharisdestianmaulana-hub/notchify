@@ -15,25 +15,27 @@ struct DetachedPomodoroView: View {
                     viewModel.isExpanded = true
                 }
             }) {
-                HStack(spacing: 6) {
+                HStack(spacing: 5) {
                     ZStack {
+                        // Background circular track
                         Circle()
-                            .stroke(Color.white.opacity(0.2), lineWidth: 3)
-                            .frame(width: 18, height: 18)
+                            .stroke(Color.white.opacity(0.15), lineWidth: 2.2)
+                            .frame(width: 15, height: 15)
                         
+                        // Active progress ring
                         Circle()
                             .trim(from: 0, to: CGFloat(viewModel.pomodoroTotal > 0 ? viewModel.pomodoroRemaining / viewModel.pomodoroTotal : 0))
                             .stroke(
-                                viewModel.isPomodoroPaused ? Color.yellow : Color.orange,
-                                style: StrokeStyle(lineWidth: 3, lineCap: .round)
+                                viewModel.isPomodoroPaused ? Color.yellow : Color(red: 1.0, green: 0.584, blue: 0.0),
+                                style: StrokeStyle(lineWidth: 2.2, lineCap: .round)
                             )
-                            .frame(width: 18, height: 18)
+                            .frame(width: 15, height: 15)
                             .rotationEffect(.degrees(-90))
                     }
                     
                     Text(timeString(from: viewModel.pomodoroRemaining))
-                        .font(.system(size: 12, weight: .bold, design: .monospaced))
-                        .foregroundColor(viewModel.isPomodoroPaused ? .yellow : .orange)
+                        .font(.system(size: 11.5, weight: .semibold, design: .rounded).monospacedDigit())
+                        .foregroundColor(viewModel.isPomodoroPaused ? .yellow : .white)
                 }
             }
             .buttonStyle(PlainButtonStyle())
@@ -43,7 +45,7 @@ struct DetachedPomodoroView: View {
                 HStack(spacing: 4) {
                     // Pause / Resume Button
                     Button(action: {
-                        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                        withAnimation(.interactiveSpring(response: 0.36, dampingFraction: 0.76)) {
                             if viewModel.isPomodoroPaused {
                                 viewModel.resumePomodoro()
                             } else {
@@ -52,16 +54,12 @@ struct DetachedPomodoroView: View {
                         }
                     }) {
                         Image(systemName: viewModel.isPomodoroPaused ? "play.fill" : "pause.fill")
-                            .font(.system(size: 8, weight: .bold))
-                            .foregroundColor(viewModel.isPomodoroPaused ? .yellow : .orange)
-                            .frame(width: 20, height: 20)
+                            .font(.system(size: 7.5, weight: .bold))
+                            .foregroundColor(viewModel.isPomodoroPaused ? .yellow : Color(red: 1.0, green: 0.584, blue: 0.0))
+                            .frame(width: 18, height: 18)
                             .background(
                                 Circle()
-                                    .fill((viewModel.isPomodoroPaused ? Color.yellow : Color.orange).opacity(0.18))
-                                    .overlay(
-                                        Circle()
-                                            .stroke((viewModel.isPomodoroPaused ? Color.yellow : Color.orange).opacity(0.35), lineWidth: 0.5)
-                                    )
+                                    .fill(Color.white.opacity(0.12))
                             )
                     }
                     .buttonStyle(PlainButtonStyle())
@@ -75,15 +73,11 @@ struct DetachedPomodoroView: View {
                     }) {
                         Image(systemName: "stop.fill")
                             .font(.system(size: 7, weight: .bold))
-                            .foregroundColor(Color(red: 1.0, green: 0.35, blue: 0.35))
-                            .frame(width: 20, height: 20)
+                            .foregroundColor(Color(red: 1.0, green: 0.4, blue: 0.4))
+                            .frame(width: 18, height: 18)
                             .background(
                                 Circle()
-                                    .fill(Color.red.opacity(0.18))
-                                    .overlay(
-                                        Circle()
-                                            .stroke(Color.red.opacity(0.35), lineWidth: 0.5)
-                                    )
+                                    .fill(Color.white.opacity(0.12))
                             )
                     }
                     .buttonStyle(PlainButtonStyle())
@@ -95,17 +89,17 @@ struct DetachedPomodoroView: View {
                 ))
             }
         }
-        .padding(.horizontal, isHovered ? 8 : 10)
-        .frame(height: 34)
+        .padding(.horizontal, isHovered ? 8 : 9)
+        .frame(height: 26)
         .background(Color.black)
         .clipShape(Capsule())
         .overlay(
             Capsule()
-                .stroke((viewModel.isPomodoroPaused ? Color.yellow : Color.orange).opacity(0.4), lineWidth: 1)
+                .stroke(Color.white.opacity(isHovered ? 0.22 : 0.12), lineWidth: 0.5)
         )
-        .shadow(color: (viewModel.isPomodoroPaused ? Color.yellow : Color.orange).opacity(0.3), radius: 5, x: 0, y: 1)
+        .shadow(color: Color.black.opacity(0.35), radius: 5, x: 0, y: 2)
         .onHover { hovering in
-            withAnimation(.spring(response: 0.35, dampingFraction: 0.72)) {
+            withAnimation(.interactiveSpring(response: 0.36, dampingFraction: 0.76)) {
                 isHovered = hovering
             }
         }
@@ -223,15 +217,15 @@ struct MeetingAlertIslandView: View {
             .buttonStyle(PlainButtonStyle())
             .help(LanguageManager.tr("Dismiss meeting alert"))
         }
-        .padding(.horizontal, 10)
-        .frame(height: 34)
+        .padding(.horizontal, 9)
+        .frame(height: 26)
         .background(Color.black)
         .clipShape(Capsule())
         .overlay(
             Capsule()
-                .stroke(Color(red: 0.2, green: 0.9, blue: 0.45).opacity(0.45), lineWidth: 1)
+                .stroke(Color(red: 0.2, green: 0.9, blue: 0.45).opacity(isHovered ? 0.4 : 0.2), lineWidth: 0.5)
         )
-        .shadow(color: Color(red: 0.2, green: 0.9, blue: 0.45).opacity(0.25), radius: 6, x: 0, y: 1)
+        .shadow(color: Color.black.opacity(0.35), radius: 5, x: 0, y: 2)
         .onAppear {
             updateRemaining()
         }
@@ -271,9 +265,9 @@ struct PrivacyIndicatorView: View {
                     .fill(Color.black)
                     .overlay(
                         Capsule()
-                            .stroke(Color.white.opacity(isHovered ? 0.22 : 0.08), lineWidth: 0.5)
+                            .stroke(Color.white.opacity(isHovered ? 0.22 : 0.12), lineWidth: 0.5)
                     )
-                    .shadow(color: Color.black.opacity(0.4), radius: 6, x: 0, y: 2)
+                    .shadow(color: Color.black.opacity(0.35), radius: 5, x: 0, y: 2)
                 
                 HStack(spacing: 6) {
                     // Micro-Peek App Name (Expands smoothly to the left on hover)
@@ -298,21 +292,21 @@ struct PrivacyIndicatorView: View {
                     HStack(spacing: 5) {
                         if privacy.isCameraActive {
                             Circle()
-                                .fill(Color.green)
-                                .frame(width: 8, height: 8)
+                                .fill(Color(red: 0.2, green: 0.9, blue: 0.45))
+                                .frame(width: 7, height: 7)
                                 .opacity(isBlinking ? 0.35 : 1.0)
                         }
                         if privacy.isMicActive {
                             Circle()
-                                .fill(Color.orange)
-                                .frame(width: 8, height: 8)
+                                .fill(Color(red: 1.0, green: 0.584, blue: 0.0))
+                                .frame(width: 7, height: 7)
                                 .opacity(isBlinking ? 0.35 : 1.0)
                         }
                     }
                 }
-                .padding(.horizontal, isHovered ? 10 : 8)
+                .padding(.horizontal, isHovered ? 9 : 8)
             }
-            .frame(height: 34)
+            .frame(height: 26)
             .fixedSize(horizontal: true, vertical: false)
         }
         .buttonStyle(PlainButtonStyle())
@@ -320,7 +314,7 @@ struct PrivacyIndicatorView: View {
             if hovering {
                 detectedAppName = privacy.resolveActiveApp()
             }
-            withAnimation(.spring(response: 0.35, dampingFraction: 0.72)) {
+            withAnimation(.interactiveSpring(response: 0.36, dampingFraction: 0.76)) {
                 isHovered = hovering
             }
         }

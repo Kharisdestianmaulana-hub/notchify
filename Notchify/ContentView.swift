@@ -617,6 +617,7 @@ struct ContentView: View {
                 if !isExpanded {
                     showTabPicker = false
                     CameraMirrorManager.shared.stopSession()
+                    restorePreviousAppFocus()
                 }
             }
             .onChange(of: showTabPicker) { isOpen in
@@ -647,9 +648,11 @@ struct ContentView: View {
             
             // Left Privacy Indicator (Camera & Microphone Island) - Repels outward on blossom & expansion
             if privacy.isCameraActive || privacy.isMicActive {
+                let sideIslandGap: CGFloat = 28
+                let sideIslandY: CGFloat = 3.5
                 PrivacyIndicatorView()
                     .frame(width: 250, alignment: .trailing)
-                    .offset(x: -(currentWidth / 2) - 12 - 125, y: 0)
+                    .offset(x: -(currentWidth / 2) - sideIslandGap - 125, y: isHiddenByFullscreen ? -80 : sideIslandY)
                     .transition(.asymmetric(
                         insertion: .move(edge: .trailing).combined(with: .scale(scale: 0.8)).combined(with: .opacity),
                         removal: .move(edge: .trailing).combined(with: .scale(scale: 0.8)).combined(with: .opacity)
@@ -657,15 +660,16 @@ struct ContentView: View {
                     .animation(.interactiveSpring(response: 0.5, dampingFraction: 0.55, blendDuration: 0), value: currentWidth)
                     .animation(.interactiveSpring(response: 0.5, dampingFraction: 0.6), value: privacy.isCameraActive)
                     .animation(.interactiveSpring(response: 0.5, dampingFraction: 0.6), value: privacy.isMicActive)
-                    .offset(y: isHiddenByFullscreen ? -80 : 0)
                     .opacity(isHiddenByFullscreen ? 0 : notchOpacity)
             }
             
             // Right Detached Pomodoro Timer Island - Repels outward on blossom & absorbs into main island
             if viewModel.isPomodoroActive && !viewModel.isExpanded && !viewModel.showTimesUp && !isPomodoroInMainIsland {
+                let sideIslandGap: CGFloat = 28
+                let sideIslandY: CGFloat = 3.5
                 DetachedPomodoroView(viewModel: viewModel)
                     .frame(width: 250, alignment: .leading)
-                    .offset(x: (currentWidth / 2) + 12 + 125, y: 0)
+                    .offset(x: (currentWidth / 2) + sideIslandGap + 125, y: isHiddenByFullscreen ? -80 : sideIslandY)
                     .transition(.asymmetric(
                         insertion: .move(edge: .leading).combined(with: .scale(scale: 0.8)).combined(with: .opacity),
                         removal: .move(edge: .leading).combined(with: .scale(scale: 0.5)).combined(with: .opacity)
@@ -673,12 +677,13 @@ struct ContentView: View {
                     .animation(.interactiveSpring(response: 0.5, dampingFraction: 0.55, blendDuration: 0), value: currentWidth)
                     .animation(.spring(response: 0.45, dampingFraction: 0.72), value: isPomodoroInMainIsland)
                     .animation(.spring(response: 0.4, dampingFraction: 0.65), value: viewModel.isPomodoroActive)
-                    .offset(y: isHiddenByFullscreen ? -80 : 0)
                     .opacity(isHiddenByFullscreen ? 0 : notchOpacity)
             }
             
             // Smart Meeting Auto-Joiner Side Island (Blossoms 2 minutes before meeting)
             if let meeting = viewModel.upcomingMeetingEvent, !viewModel.isExpanded {
+                let sideIslandGap: CGFloat = 28
+                let sideIslandY: CGFloat = 3.5
                 let isPomodoroOnRight = viewModel.isPomodoroActive && !viewModel.showTimesUp && !isPomodoroInMainIsland
                 let isPrivacyActive = privacy.isCameraActive || privacy.isMicActive
                 let meetingIslandWidth: CGFloat = 300
@@ -687,9 +692,9 @@ struct ContentView: View {
                     .frame(width: meetingIslandWidth, alignment: isPomodoroOnRight ? .trailing : .leading)
                     .offset(
                         x: isPomodoroOnRight
-                            ? (-(currentWidth / 2) - 12 - (isPrivacyActive ? 60 : 0) - (meetingIslandWidth / 2))
-                            : ((currentWidth / 2) + 12 + (meetingIslandWidth / 2)),
-                        y: 0
+                            ? (-(currentWidth / 2) - sideIslandGap - (isPrivacyActive ? 60 : 0) - (meetingIslandWidth / 2))
+                            : ((currentWidth / 2) + sideIslandGap + (meetingIslandWidth / 2)),
+                        y: isHiddenByFullscreen ? -80 : sideIslandY
                     )
                     .transition(.asymmetric(
                         insertion: .move(edge: isPomodoroOnRight ? .trailing : .leading).combined(with: .scale(scale: 0.8)).combined(with: .opacity),
@@ -698,7 +703,6 @@ struct ContentView: View {
                     .animation(.interactiveSpring(response: 0.5, dampingFraction: 0.55, blendDuration: 0), value: currentWidth)
                     .animation(.spring(response: 0.45, dampingFraction: 0.72), value: viewModel.upcomingMeetingEvent)
                     .animation(.spring(response: 0.45, dampingFraction: 0.72), value: isPomodoroOnRight)
-                    .offset(y: isHiddenByFullscreen ? -80 : 0)
                     .opacity(isHiddenByFullscreen ? 0 : notchOpacity)
             }
         } // End of outer ZStack
@@ -782,8 +786,45 @@ struct ContentView: View {
         let hasOpenWindow = NSApp.windows.contains { window in
             window.isVisible && !(window is NotchPanel)
         }
-        if !hasOpenWindow {
-            previousApp?.activate(options: .activateIgnoringOtherApps)
+        if hasOpenWindow { return }
+        
+        let mouseLoc = NSEvent.mouseLocation
+        let primaryScreenHeight = NSScreen.screens.first?.frame.height ?? (NSScreen.main?.frame.height ?? 1080)
+        let quartzMouse = CGPoint(x: mouseLoc.x, y: primaryScreenHeight - mouseLoc.y)
+        
+        var activatedTargetApp = false
+        let windowList = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+        
+        for window in windowList {
+            guard let pidNumber = window[kCGWindowOwnerPID as String] as? NSNumber else { continue }
+            let ownerPID = pidNumber.int32Value
+            guard ownerPID != ProcessInfo.processInfo.processIdentifier else { continue }
+            
+            let layer = (window[kCGWindowLayer as String] as? NSNumber)?.intValue ?? -1
+            guard layer == 0 else { continue }
+            
+            let alpha = (window[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? 1.0
+            guard alpha > 0.1 else { continue }
+            
+            if let boundsDict = window[kCGWindowBounds as String] as? [String: Any],
+               let rect = CGRect(dictionaryRepresentation: boundsDict as CFDictionary) {
+                if rect.width > 40 && rect.height > 40 && rect.contains(quartzMouse) {
+                    if let app = NSRunningApplication(processIdentifier: ownerPID),
+                       app.activationPolicy == .regular {
+                        app.activate(options: .activateIgnoringOtherApps)
+                        activatedTargetApp = true
+                        break
+                    }
+                }
+            }
         }
+        
+        if !activatedTargetApp {
+            if let previous = previousApp, !previous.isTerminated {
+                previous.activate(options: .activateIgnoringOtherApps)
+            }
+        }
+        
+        NSApp.deactivate()
     }
 }
