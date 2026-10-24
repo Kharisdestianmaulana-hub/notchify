@@ -133,18 +133,18 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
     init() {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 560, height: 620),
-            styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView],
+            styleMask: [.titled, .closable, .miniaturizable],
             backing: .buffered,
             defer: false
         )
         window.center()
         window.title = LanguageManager.tr("Notchify Settings")
-        window.titlebarAppearsTransparent = true
-        window.titleVisibility = .visible
         window.isMovableByWindowBackground = true
-        window.level = .floating // Ensures settings stays on top of other apps
+        window.level = .normal
+        window.hidesOnDeactivate = true
         window.isReleasedWhenClosed = false
         window.standardWindowButton(.zoomButton)?.isHidden = true
+        window.contentView = NSHostingView(rootView: SettingsView())
         
         super.init(window: window)
         window.delegate = self
@@ -156,9 +156,7 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
     
     func show() {
         window?.title = LanguageManager.tr("Notchify Settings")
-        if window?.contentView == nil {
-            window?.contentView = NSHostingView(rootView: SettingsView())
-        }
+        window?.contentView = NSHostingView(rootView: SettingsView())
         window?.center()
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
