@@ -150,8 +150,21 @@ struct CompactClockView: View {
                 .font(.system(size: 12.5, weight: .semibold, design: .rounded))
                 .foregroundColor(.white)
             
-            // 3. Notch Mascot Eyes
-            NotchMascotEyesView(state: .idle)
+            // 3. Notch Mascot Eyes (Living animated companion with battery awareness)
+            let mascotState: MascotEyeState = {
+                if viewModel.isBatteryCharging {
+                    return .batteryCharging
+                } else if viewModel.batteryLevel <= 20 {
+                    return .batteryLow
+                } else {
+                    return .idle
+                }
+            }()
+            NotchMascotEyesView(
+                state: mascotState,
+                eyeSize: CGSize(width: 5.2, height: 9.5),
+                spacing: 4.2
+            )
         }
         .onReceive(timer) { _ in updateTime() }
         .onAppear { updateTime() }

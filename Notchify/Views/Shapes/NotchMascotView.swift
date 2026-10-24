@@ -21,9 +21,14 @@ enum PomodoroMascotPreset: Equatable {
 // MARK: - Mascot Eye State
 enum MascotEyeState: Equatable {
     case idle
+    case batteryLow
+    case batteryCharging
     case music(isPlaying: Bool)
     case pomodoro(preset: PomodoroMascotPreset, isPaused: Bool)
     case timesUp
+    case videoRecording
+    case tabVibe(tab: NotchTab)
+    case petted
     case wink
 }
 
@@ -105,7 +110,7 @@ struct MascotEyeArcShape: Shape {
         let h = rect.height
         
         if flipped {
-            // Zen / Sleeping / Chill eye (crescent curving downwards)
+            // Zen / Sleeping / Chill eye (crescent curving downwards ◡)
             path.move(to: CGPoint(x: 0, y: h * 0.35))
             path.addCurve(
                 to: CGPoint(x: w, y: h * 0.35),
@@ -113,7 +118,7 @@ struct MascotEyeArcShape: Shape {
                 control2: CGPoint(x: w * 0.75, y: h * 0.90)
             )
         } else {
-            // Happy smiling eye (soft rounded arch ⌒, NOT sharp triangle peak)
+            // Happy smiling eye (soft rounded arch ⌒)
             path.move(to: CGPoint(x: 0, y: h * 0.75))
             path.addCurve(
                 to: CGPoint(x: w, y: h * 0.75),
@@ -121,6 +126,67 @@ struct MascotEyeArcShape: Shape {
                 control2: CGPoint(x: w * 0.78, y: h * 0.12)
             )
         }
+        return path
+    }
+}
+
+// MARK: - Mascot Squinting Eye (> <) Shape for Petting & Happy Reactions
+struct MascotSquintEyeShape: Shape {
+    var isLeft: Bool
+    
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        let w = rect.width
+        let h = rect.height
+        
+        if isLeft {
+            // ">" wedge pointing right
+            path.move(to: CGPoint(x: w * 0.15, y: h * 0.22))
+            path.addLine(to: CGPoint(x: w * 0.88, y: h * 0.50))
+            path.addLine(to: CGPoint(x: w * 0.15, y: h * 0.78))
+        } else {
+            // "<" wedge pointing left
+            path.move(to: CGPoint(x: w * 0.85, y: h * 0.22))
+            path.addLine(to: CGPoint(x: w * 0.12, y: h * 0.50))
+            path.addLine(to: CGPoint(x: w * 0.85, y: h * 0.78))
+        }
+        return path
+    }
+}
+
+// MARK: - Mascot Star / Sparkle Eye Shape (✧ / ★) for Celebration & Charging
+struct MascotStarEyeShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        let cx = rect.midX
+        let cy = rect.midY
+        let rx = rect.width * 0.5
+        let ry = rect.height * 0.5
+        let inner = 0.28
+        
+        path.move(to: CGPoint(x: cx, y: cy - ry))
+        path.addQuadCurve(to: CGPoint(x: cx + rx, y: cy), control: CGPoint(x: cx + rx * inner, y: cy - ry * inner))
+        path.addQuadCurve(to: CGPoint(x: cx, y: cy + ry), control: CGPoint(x: cx + rx * inner, y: cy + ry * inner))
+        path.addQuadCurve(to: CGPoint(x: cx - rx, y: cy), control: CGPoint(x: cx - rx * inner, y: cy + ry * inner))
+        path.addQuadCurve(to: CGPoint(x: cx, y: cy - ry), control: CGPoint(x: cx - rx * inner, y: cy - ry * inner))
+        path.closeSubpath()
+        return path
+    }
+}
+
+// MARK: - Mascot Sleepy / Low Battery Eye Shape (- -)
+struct MascotSleepyEyeShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        let w = rect.width
+        let h = rect.height
+        
+        path.move(to: CGPoint(x: 0, y: h * 0.55))
+        path.addCurve(
+            to: CGPoint(x: w, y: h * 0.55),
+            control1: CGPoint(x: w * 0.3, y: h * 0.48),
+            control2: CGPoint(x: w * 0.7, y: h * 0.48)
+        )
         return path
     }
 }
@@ -147,15 +213,17 @@ struct NotchMascotEyesView: View {
     @State private var zenBreath: Bool = false
     @State private var celebratePulse: Bool = false
     @State private var glanceOffset: CGFloat = 0
+    @State private var pupilLookOffset: CGSize = .zero
+    @State private var breathingPulse: Bool = false
+    @State private var starTwinkle: Bool = false
+    @State private var notesReadingOffset: CGFloat = 0
     
-    // Timer for natural periodic blinks
-    private let blinkTimer = Timer.publish(every: 3.8, on: .main, in: .common).autoconnect()
-    // Timer for idle micro-glance
-    private let glanceTimer = Timer.publish(every: 5.2, on: .main, in: .common).autoconnect()
-    // Timer for break glance
+    // Natural randomized timer intervals
+    private let blinkTimer = Timer.publish(every: 2.9, on: .main, in: .common).autoconnect()
+    private let glanceTimer = Timer.publish(every: 4.4, on: .main, in: .common).autoconnect()
     private let breakTimer = Timer.publish(every: 2.2, on: .main, in: .common).autoconnect()
-    // Timer for dynamic music vibe cycling
-    private let musicVibeTimer = Timer.publish(every: 3.2, on: .main, in: .common).autoconnect()
+    private let musicVibeTimer = Timer.publish(every: 2.7, on: .main, in: .common).autoconnect()
+    private let notesScanTimer = Timer.publish(every: 1.3, on: .main, in: .common).autoconnect()
     
     init(
         state: MascotEyeState,
@@ -171,21 +239,26 @@ struct NotchMascotEyesView: View {
     private let eyeWarmFill = Color(red: 1.0, green: 0.97, blue: 0.90)
     private let eyeInnerGleam = Color.white
     private let eyeGlowColor = Color(red: 1.0, green: 0.82, blue: 0.38)
+    private let chargingGreenColor = Color(red: 0.40, green: 0.95, blue: 0.25)
     
     var body: some View {
         HStack(spacing: spacing) {
             singleEyeView(isLeft: true)
             singleEyeView(isLeft: false)
         }
-        .offset(x: glanceOffset)
+        .offset(x: glanceOffset + notesReadingOffset)
         .offset(y: eyeYOffset)
-        .scaleEffect(celebratePulse ? 1.18 : 1.0)
+        .scaleEffect(
+            celebratePulse
+                ? 1.20
+                : (breathingPulse ? 1.04 : 0.97)
+        )
         .rotationEffect(.degrees(overallRotation))
         .onReceive(blinkTimer) { _ in
-            triggerBlink()
+            triggerNaturalBlink()
         }
         .onReceive(glanceTimer) { _ in
-            triggerGlance()
+            triggerCuriousGlance()
         }
         .onReceive(breakTimer) { _ in
             if case .pomodoro(.shortBreak, _) = state {
@@ -201,6 +274,15 @@ struct NotchMascotEyesView: View {
                 }
             }
         }
+        .onReceive(notesScanTimer) { _ in
+            if case .tabVibe(let tab) = state, tab == .notes {
+                withAnimation(.easeInOut(duration: 0.45)) {
+                    notesReadingOffset = (notesReadingOffset == -1.2) ? 1.2 : -1.2
+                }
+            } else {
+                notesReadingOffset = 0
+            }
+        }
         .onAppear {
             setupInitialAnimations()
         }
@@ -212,58 +294,158 @@ struct NotchMascotEyesView: View {
     // MARK: - Single Eye Rendering
     @ViewBuilder
     private func singleEyeView(isLeft: Bool) -> some View {
-        let isWinkingEye = (state == .wink && isLeft)
-        let isZenRest = isRestActive
-        
         Group {
-            if isMusicActive {
-                musicEyeView(isLeft: isLeft)
-            } else if isZenRest {
-                // Peaceful sleeping crescent ◡ ◡ for 15m rest
-                chillArcEyeView()
-            } else if isWinkingEye {
-                // Winking eye (left eye winks shut)
-                smilingArcEyeView()
-            } else {
-                // Glowing Capsule Eye (Open eye)
-                openCapsuleEyeView(isLeft: isLeft)
+            switch state {
+            case .petted:
+                // Squinting / cute eye "> <"
+                squintEyeView(isLeft: isLeft)
+                
+            case .timesUp:
+                // Celebration Star eyes ★ ★
+                starEyeView(isCelebration: true)
+                
+            case .batteryCharging:
+                // Energized sparkle star eyes ✧ ✧
+                starEyeView(isCelebration: false)
+                
+            case .batteryLow:
+                // Sleepy / tired eyelids - -
+                sleepyEyeView()
+                
+            case .videoRecording:
+                // Inquisitive sentinel eye looking up towards the webcam
+                openCapsuleEyeView(isLeft: isLeft, lookOffset: CGSize(width: 0, height: -0.7))
+                
+            case .music(let isPlaying):
+                if isPlaying {
+                    musicEyeView(isLeft: isLeft)
+                } else {
+                    // Paused: curious head-tilt, one eye open, one smiling
+                    if isLeft {
+                        openCapsuleEyeView(isLeft: isLeft, lookOffset: CGSize(width: -0.6, height: 0))
+                    } else {
+                        smilingArcEyeView()
+                    }
+                }
+                
+            case .pomodoro(let preset, _):
+                pomodoroEyeView(preset: preset, isLeft: isLeft)
+                
+            case .tabVibe(let tab):
+                tabSpecificEyeView(tab: tab, isLeft: isLeft)
+                
+            case .wink:
+                if isLeft {
+                    smilingArcEyeView()
+                } else {
+                    openCapsuleEyeView(isLeft: isLeft)
+                }
+                
+            case .idle:
+                openCapsuleEyeView(isLeft: isLeft, lookOffset: pupilLookOffset)
             }
         }
-        .shadow(color: eyeGlowColor.opacity(0.75), radius: 3, x: 0, y: 0)
-        .shadow(color: eyeGlowColor.opacity(0.35), radius: 6, x: 0, y: 0)
+        .shadow(
+            color: activeGlowColor.opacity(breathingPulse ? 0.85 : 0.45),
+            radius: (state == .batteryCharging || state == .timesUp) ? 5 : 3,
+            x: 0,
+            y: 0
+        )
+        .shadow(
+            color: activeGlowColor.opacity(0.30),
+            radius: 6,
+            x: 0,
+            y: 0
+        )
         .rotationEffect(.degrees(individualEyeRotation(isLeft: isLeft)))
     }
     
-    // MARK: - Dynamic Music Eye Rendering (Changes lively while listening to song)
+    // MARK: - Glow Color Resolution
+    private var activeGlowColor: Color {
+        if state == .batteryCharging {
+            return chargingGreenColor
+        }
+        if state == .timesUp {
+            return Color.yellow
+        }
+        return eyeGlowColor
+    }
+    
+    // MARK: - Dynamic Music Eye Rendering
     @ViewBuilder
     private func musicEyeView(isLeft: Bool) -> some View {
         switch musicVibeState {
         case .happySmile:
-            // Soft rounded smile arch ⌒ ⌒
             smilingArcEyeView()
         case .wideEyes:
-            // Big open eyes enjoying music ● ● (with blinks)
-            openCapsuleEyeView(isLeft: isLeft)
+            openCapsuleEyeView(isLeft: isLeft, lookOffset: pupilLookOffset)
         case .leftWink:
-            // Left eye winks ⌒, right eye open ●
             if isLeft {
                 smilingArcEyeView()
             } else {
                 openCapsuleEyeView(isLeft: isLeft)
             }
         case .rightWink:
-            // Left eye open ●, right eye winks ⌒
             if isLeft {
                 openCapsuleEyeView(isLeft: isLeft)
             } else {
                 smilingArcEyeView()
             }
         case .chillVibe:
-            // Relaxed melody immersion ◡ ◡
             chillArcEyeView()
         }
     }
     
+    // MARK: - Tab-Specific Expressions
+    @ViewBuilder
+    private func tabSpecificEyeView(tab: NotchTab, isLeft: Bool) -> some View {
+        switch tab {
+        case .mirror:
+            // Selfie Smile (Happy arc eyes ready for photos)
+            smilingArcEyeView()
+            
+        case .dropzone:
+            // Looking down eagerly at the drop target
+            openCapsuleEyeView(isLeft: isLeft, lookOffset: CGSize(width: 0, height: 0.85))
+            
+        case .notes:
+            // Scanning eyes back and forth reading
+            openCapsuleEyeView(isLeft: isLeft, lookOffset: CGSize(width: notesReadingOffset * 0.7, height: 0.1))
+            
+        case .weather:
+            // Cheerful open eyes
+            openCapsuleEyeView(isLeft: isLeft, lookOffset: pupilLookOffset)
+            
+        case .media:
+            smilingArcEyeView()
+            
+        case .clipboard, .calculator, .agenda, .system, .network:
+            openCapsuleEyeView(isLeft: isLeft, lookOffset: pupilLookOffset)
+            
+        case .pomodoro:
+            openCapsuleEyeView(isLeft: isLeft, lookOffset: pupilLookOffset)
+        }
+    }
+    
+    // MARK: - Pomodoro Expressions
+    @ViewBuilder
+    private func pomodoroEyeView(preset: PomodoroMascotPreset, isLeft: Bool) -> some View {
+        switch preset {
+        case .focus:
+            // Sharp focused concentration gaze
+            openCapsuleEyeView(isLeft: isLeft, lookOffset: .zero)
+        case .rest:
+            // Zen sleep crescent
+            chillArcEyeView()
+        case .shortBreak:
+            // Cheerful smile break
+            smilingArcEyeView()
+        case .custom:
+            openCapsuleEyeView(isLeft: isLeft, lookOffset: pupilLookOffset)
+        }
+    }
+    
+    // MARK: - Shapes & Renderers
     @ViewBuilder
     private func smilingArcEyeView() -> some View {
         MascotEyeArcShape(flipped: false)
@@ -294,20 +476,81 @@ struct NotchMascotEyesView: View {
     }
     
     @ViewBuilder
-    private func openCapsuleEyeView(isLeft: Bool) -> some View {
-        Capsule()
+    private func squintEyeView(isLeft: Bool) -> some View {
+        MascotSquintEyeShape(isLeft: isLeft)
+            .stroke(
+                LinearGradient(
+                    colors: [eyeInnerGleam, eyeWarmFill],
+                    startPoint: .top,
+                    endPoint: .bottom
+                ),
+                style: StrokeStyle(lineWidth: eyeSize.width * 0.42, lineCap: .round, lineJoin: .round)
+            )
+            .frame(width: eyeSize.width * 1.15, height: eyeSize.height * 0.82)
+    }
+    
+    @ViewBuilder
+    private func starEyeView(isCelebration: Bool) -> some View {
+        MascotStarEyeShape()
             .fill(
                 RadialGradient(
-                    colors: [eyeInnerGleam, eyeWarmFill],
+                    colors: isCelebration
+                        ? [Color.white, Color(red: 1.0, green: 0.9, blue: 0.3)]
+                        : [Color.white, chargingGreenColor],
                     center: .center,
                     startRadius: 0,
-                    endRadius: eyeSize.height * 0.5
+                    endRadius: eyeSize.height * 0.55
                 )
             )
-            .frame(
-                width: eyeSize.width * eyeScaleX(isLeft: isLeft),
-                height: max(1.2, eyeSize.height * (isBlinking ? 0.12 : eyeScaleY(isLeft: isLeft)))
+            .frame(width: eyeSize.width * 1.35, height: eyeSize.height * 1.1)
+            .scaleEffect(starTwinkle ? 1.15 : 0.92)
+            .rotationEffect(.degrees(starTwinkle ? 12 : -12))
+    }
+    
+    @ViewBuilder
+    private func sleepyEyeView() -> some View {
+        MascotSleepyEyeShape()
+            .stroke(
+                LinearGradient(
+                    colors: [eyeWarmFill.opacity(0.8), eyeWarmFill.opacity(0.5)],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                ),
+                style: StrokeStyle(lineWidth: eyeSize.width * 0.42, lineCap: .round)
             )
+            .frame(width: eyeSize.width * 1.2, height: eyeSize.height * 0.7)
+    }
+    
+    @ViewBuilder
+    private func openCapsuleEyeView(isLeft: Bool, lookOffset: CGSize = .zero) -> some View {
+        ZStack {
+            // Base Capsule with dynamic light gradient center
+            Capsule()
+                .fill(
+                    RadialGradient(
+                        colors: [eyeInnerGleam, eyeWarmFill],
+                        center: UnitPoint(
+                            x: 0.5 + Double(lookOffset.width * 0.28),
+                            y: 0.5 + Double(lookOffset.height * 0.28)
+                        ),
+                        startRadius: 0,
+                        endRadius: eyeSize.height * 0.5
+                    )
+                )
+            
+            // Lively shining sparkle highlight (eye gleam dot)
+            Circle()
+                .fill(Color.white.opacity(0.95))
+                .frame(width: eyeSize.width * 0.40, height: eyeSize.width * 0.40)
+                .offset(
+                    x: (isLeft ? -eyeSize.width * 0.12 : eyeSize.width * 0.12) + lookOffset.width * 1.4,
+                    y: -eyeSize.height * 0.18 + lookOffset.height * 1.4
+                )
+        }
+        .frame(
+            width: eyeSize.width * eyeScaleX(isLeft: isLeft),
+            height: max(1.2, eyeSize.height * (isBlinking ? 0.10 : eyeScaleY(isLeft: isLeft)))
+        )
     }
     
     // MARK: - State Computed Properties
@@ -330,7 +573,7 @@ struct NotchMascotEyesView: View {
             return musicBounce ? -2.2 : 0.6
         }
         if state == .timesUp {
-            return celebratePulse ? -2.5 : 0
+            return celebratePulse ? -3.0 : 0
         }
         return 0
     }
@@ -338,15 +581,17 @@ struct NotchMascotEyesView: View {
     private var overallRotation: Double {
         switch state {
         case .music(let playing):
-            return playing ? (musicBounce ? -4.0 : 4.0) : -2.0
+            return playing ? (musicBounce ? -3.5 : 3.5) : -2.0
         case .pomodoro(.focus, let isPaused):
-            return isPaused ? 7.0 : 0
+            return isPaused ? 6.0 : 0
         case .pomodoro(.shortBreak, _):
             return breakGlance ? 3.0 : -3.0
         case .pomodoro(.custom, let isPaused):
-            return isPaused ? 5.0 : 0
+            return isPaused ? 4.0 : 0
         case .wink:
             return 3.0
+        case .tabVibe(let tab):
+            return (tab == .mirror) ? 2.5 : 0
         default:
             return 0
         }
@@ -355,11 +600,11 @@ struct NotchMascotEyesView: View {
     private func eyeScaleX(isLeft: Bool) -> CGFloat {
         switch state {
         case .pomodoro(.focus, _):
-            return 1.12 // Slightly broader determined gaze
-        case .pomodoro(.shortBreak, _):
-            return 1.05
+            return 1.15 // Determined wide gaze
         case .timesUp:
-            return 1.2
+            return 1.25
+        case .videoRecording:
+            return 1.10
         default:
             return 1.0
         }
@@ -368,9 +613,11 @@ struct NotchMascotEyesView: View {
     private func eyeScaleY(isLeft: Bool) -> CGFloat {
         switch state {
         case .pomodoro(.focus, _):
-            return 0.78 // Narrowed concentration gaze
+            return 0.78 // Narrowed concentration focus
         case .timesUp:
-            return 1.15
+            return 1.20
+        case .batteryLow:
+            return 0.65 // Heavy eyelids
         default:
             return 1.0
         }
@@ -379,17 +626,15 @@ struct NotchMascotEyesView: View {
     private func individualEyeRotation(isLeft: Bool) -> Double {
         switch state {
         case .pomodoro(.focus, _):
-            // Angle slightly inwards for intense focus
-            return isLeft ? 5.0 : -5.0
+            return isLeft ? 5.5 : -5.5
         case .pomodoro(.shortBreak, _):
             return breakGlance ? (isLeft ? 2 : 4) : (isLeft ? -4 : -2)
         default:
-            // Natural slight splay like LogoNotchify
             return isLeft ? -3.0 : 3.0
         }
     }
     
-    // MARK: - Animations
+    // MARK: - Natural Animations & Micro-Life Engine
     private func cycleMusicVibe() {
         let sequence: [MusicVibeState] = [.happySmile, .wideEyes, .leftWink, .happySmile, .rightWink, .wideEyes, .chillVibe]
         if let currentIdx = sequence.firstIndex(of: musicVibeState) {
@@ -400,36 +645,69 @@ struct NotchMascotEyesView: View {
         }
     }
     
-    private func triggerBlink() {
-        guard !isBlinking && !isRestActive && state != .timesUp else { return }
-        // If music is active, only blink when wide open eyes are active
+    private func triggerNaturalBlink() {
+        guard !isBlinking && !isRestActive && state != .timesUp && state != .petted else { return }
         if isMusicActive && musicVibeState != .wideEyes { return }
         
         withAnimation(.easeInOut(duration: 0.10)) {
             isBlinking = true
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
-            withAnimation(.spring(response: 0.24, dampingFraction: 0.65)) {
-                isBlinking = false
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.11) {
+            withAnimation(.spring(response: 0.22, dampingFraction: 0.65)) {
+                self.isBlinking = false
+            }
+            
+            // 25% chance of realistic double-blink
+            if Double.random(in: 0...1) < 0.25 {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+                    withAnimation(.easeInOut(duration: 0.08)) {
+                        self.isBlinking = true
+                    }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.09) {
+                        withAnimation(.spring(response: 0.20, dampingFraction: 0.65)) {
+                            self.isBlinking = false
+                        }
+                    }
+                }
             }
         }
     }
     
-    private func triggerGlance() {
-        guard state == .idle else { return }
-        let directions: [CGFloat] = [-1.5, 0, 1.5, 0]
-        let target = directions.randomElement() ?? 0
-        withAnimation(.easeInOut(duration: 0.4)) {
-            glanceOffset = target
+    private func triggerCuriousGlance() {
+        guard state == .idle || (isMusicActive && musicVibeState == .wideEyes) else { return }
+        
+        // Randomly pick: glance left (towards clock), glance right (towards battery), or center
+        let choices: [(offset: CGFloat, pupil: CGSize)] = [
+            (-1.8, CGSize(width: -0.85, height: 0)), // Look left
+            (1.8, CGSize(width: 0.85, height: 0)),   // Look right
+            (0, CGSize(width: 0, height: 0.4)),      // Look slightly down
+            (0, .zero)                               // Look straight ahead
+        ]
+        
+        guard let choice = choices.randomElement() else { return }
+        
+        withAnimation(.easeInOut(duration: 0.35)) {
+            glanceOffset = choice.offset
+            pupilLookOffset = choice.pupil
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
-            withAnimation(.easeInOut(duration: 0.4)) {
-                glanceOffset = 0
+        
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.25) {
+            withAnimation(.easeInOut(duration: 0.35)) {
+                self.glanceOffset = 0
+                self.pupilLookOffset = .zero
             }
         }
     }
     
     private func setupInitialAnimations() {
+        // Subtle constant breathing
+        withAnimation(.easeInOut(duration: 2.2).repeatForever(autoreverses: true)) {
+            breathingPulse = true
+        }
+        // Twinkle for stars
+        withAnimation(.easeInOut(duration: 0.85).repeatForever(autoreverses: true)) {
+            starTwinkle = true
+        }
         handleStateChange(to: state)
     }
     
@@ -437,7 +715,7 @@ struct NotchMascotEyesView: View {
         switch newState {
         case .music(let isPlaying):
             if isPlaying {
-                withAnimation(.easeInOut(duration: 0.42).repeatForever(autoreverses: true)) {
+                withAnimation(.easeInOut(duration: 0.38).repeatForever(autoreverses: true)) {
                     musicBounce = true
                 }
             } else {
@@ -449,7 +727,7 @@ struct NotchMascotEyesView: View {
                 zenBreath = true
             }
         case .timesUp:
-            withAnimation(.easeInOut(duration: 0.28).repeatForever(autoreverses: true)) {
+            withAnimation(.easeInOut(duration: 0.26).repeatForever(autoreverses: true)) {
                 celebratePulse = true
             }
         default:
@@ -560,7 +838,7 @@ struct NotchMascotCompanionView: View {
     
     @State private var isHovered: Bool = false
     @State private var isSquished: Bool = false
-    @State private var isWinking: Bool = false
+    @State private var isPetted: Bool = false
     @State private var breathing: Bool = false
     
     init(viewModel: NotchViewModel, size: CGFloat = 30) {
@@ -568,13 +846,16 @@ struct NotchMascotCompanionView: View {
         self.size = size
     }
     
-    // Resolve mascot eye state based on app activity
+    // Resolve dynamic mascot state based on current activity & context
     private var currentMascotState: MascotEyeState {
-        if isWinking {
-            return .wink
+        if isPetted {
+            return .petted
         }
         if viewModel.showTimesUp {
             return .timesUp
+        }
+        if CameraMirrorManager.shared.isRecordingVideo {
+            return .videoRecording
         }
         if viewModel.isPlaying {
             return .music(isPlaying: true)
@@ -584,7 +865,13 @@ struct NotchMascotCompanionView: View {
             let preset = PomodoroMascotPreset.from(totalMinutes: totalMinutes)
             return .pomodoro(preset: preset, isPaused: viewModel.isPomodoroPaused)
         }
-        return .idle
+        if viewModel.batteryLevel <= 20 && !viewModel.isBatteryCharging {
+            return .batteryLow
+        }
+        if viewModel.isBatteryCharging {
+            return .batteryCharging
+        }
+        return .tabVibe(tab: viewModel.selectedTab)
     }
     
     var body: some View {
@@ -598,28 +885,35 @@ struct NotchMascotCompanionView: View {
                 // Embedded Mascot Eyes
                 NotchMascotEyesView(
                     state: currentMascotState,
-                    eyeSize: CGSize(width: size * 0.16, height: size * 0.28),
+                    eyeSize: CGSize(
+                        width: size * (isHovered ? 0.18 : 0.16),
+                        height: size * (isHovered ? 0.30 : 0.28)
+                    ),
                     spacing: size * 0.12
                 )
                 .offset(y: -size * 0.02)
             }
             .scaleEffect(
                 isSquished
-                    ? CGSize(width: 1.22, height: 0.82)
-                    : (isHovered ? CGSize(width: 1.08, height: 1.08) : (breathing ? CGSize(width: 1.02, height: 1.02) : CGSize(width: 0.98, height: 0.98)))
+                    ? CGSize(width: 1.25, height: 0.78)
+                    : (isHovered
+                       ? CGSize(width: 1.08, height: 1.08)
+                       : (breathing ? CGSize(width: 1.02, height: 1.02) : CGSize(width: 0.98, height: 0.98)))
             )
-            .rotationEffect(.degrees(viewModel.isPlaying ? (breathing ? -2.2 : 2.2) : 0))
-            .animation(.spring(response: 0.32, dampingFraction: 0.58), value: isSquished)
+            .rotationEffect(.degrees(viewModel.isPlaying ? (breathing ? -2.5 : 2.5) : (isHovered ? -1.5 : 0)))
+            .animation(.spring(response: 0.32, dampingFraction: 0.55), value: isSquished)
             .animation(.easeInOut(duration: 0.18), value: isHovered)
             .animation(.easeInOut(duration: 0.45).repeatForever(autoreverses: true), value: viewModel.isPlaying)
         }
         .buttonStyle(PlainButtonStyle())
         .help(LanguageManager.tr("Notchify Companion"))
         .onHover { h in
-            isHovered = h
+            withAnimation(.spring(response: 0.28, dampingFraction: 0.65)) {
+                isHovered = h
+            }
         }
         .onAppear {
-            withAnimation(.easeInOut(duration: 2.8).repeatForever(autoreverses: true)) {
+            withAnimation(.easeInOut(duration: 2.4).repeatForever(autoreverses: true)) {
                 breathing = true
             }
         }
@@ -628,17 +922,22 @@ struct NotchMascotCompanionView: View {
     private func performInteractiveReaction() {
         // Haptic feedback
         NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .now)
+        NSSound(named: "Tink")?.play()
         
-        // Squish bounce
+        // Squish & Pet bounce
         isSquished = true
-        isWinking = true
+        isPetted = true
         
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.14) {
-            isSquished = false
+            withAnimation(.spring(response: 0.28, dampingFraction: 0.50)) {
+                self.isSquished = false
+            }
         }
         
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.65) {
-            isWinking = false
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.85) {
+            withAnimation(.easeInOut(duration: 0.25)) {
+                self.isPetted = false
+            }
         }
     }
 }
