@@ -297,7 +297,12 @@ struct LanguageManager {
         "Phone Number Copied": "Nomor Telepon Disalin",
         "Currency Copied": "Nominal Uang Disalin",
         "words": "kata",
-        "Notchify Companion": "Maskot Notchify"
+        "Notchify Companion": "Maskot Notchify",
+        "Show Lyrics": "Tampilkan Lirik",
+        "Close Lyrics": "Tutup Lirik",
+        "No lyrics available": "Lirik tidak tersedia",
+        "Search": "Cari",
+        "Lyrics": "Lirik"
     ]
     
     static func tr(_ key: String) -> String {

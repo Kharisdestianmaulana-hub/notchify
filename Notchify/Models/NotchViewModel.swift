@@ -80,6 +80,8 @@ class NotchViewModel: ObservableObject {
     // Lyrics State
     @Published var lyrics: [LyricLine] = []
     @Published var currentLyricIndex: Int = -1
+    @Published var showMediaLyrics: Bool = false
+    @Published var isFetchingLyrics: Bool = false
     
     // Album Art Glow
     @Published var accentColor: Color = .clear
@@ -375,12 +377,14 @@ class NotchViewModel: ObservableObject {
                     self.currentSong = title
                     self.currentArtist = artist ?? ""
                     
-                    // Fetch new lyrics only if enabled (default is off)
+                    // Fetch new lyrics only if enabled or user opened lyrics
                     self.lyrics = []
                     self.currentLyricIndex = -1
-                    if UserDefaults.standard.bool(forKey: "enableLyrics") {
-                        LyricsManager.shared.fetchLyrics(for: title, artist: artist ?? "") { newLyrics in
-                            self.lyrics = newLyrics
+                    if UserDefaults.standard.bool(forKey: "enableLyrics") || self.showMediaLyrics {
+                        self.isFetchingLyrics = true
+                        LyricsManager.shared.fetchLyrics(for: title, artist: artist ?? "") { [weak self] newLyrics in
+                            self?.isFetchingLyrics = false
+                            self?.lyrics = newLyrics
                         }
                     }
                 }
@@ -609,6 +613,24 @@ class NotchViewModel: ObservableObject {
     func seek(to time: Double) {
         MediaRemoteHelper.shared.seek(to: time)
         self.elapsed = time
+    }
+    
+    func toggleMediaLyrics() {
+        withAnimation(.interactiveSpring(response: 0.38, dampingFraction: 0.76)) {
+            showMediaLyrics.toggle()
+        }
+        if showMediaLyrics && lyrics.isEmpty && !currentSong.isEmpty {
+            fetchLyricsNow()
+        }
+    }
+    
+    func fetchLyricsNow() {
+        guard !currentSong.isEmpty else { return }
+        isFetchingLyrics = true
+        LyricsManager.shared.fetchLyrics(for: currentSong, artist: currentArtist) { [weak self] newLyrics in
+            self?.isFetchingLyrics = false
+            self?.lyrics = newLyrics
+        }
     }
     
     static func extractDominantColor(from image: NSImage) -> Color {

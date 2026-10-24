@@ -83,17 +83,74 @@ struct ClipboardBlossomView: View {
     }
 }
 
+// MARK: - Circular Battery Ring View
+struct CircularBatteryRingView: View {
+    let level: Double // 0.0 ... 1.0
+    let isCharging: Bool
+    var size: CGFloat = 13.5
+    
+    private var ringColor: Color {
+        if isCharging {
+            return Color(red: 0.32, green: 0.94, blue: 0.45)
+        }
+        if level <= 0.15 {
+            return Color(red: 1.0, green: 0.32, blue: 0.32)
+        }
+        if level <= 0.30 {
+            return Color(red: 1.0, green: 0.78, blue: 0.18)
+        }
+        return Color(red: 0.32, green: 0.94, blue: 0.45)
+    }
+    
+    var body: some View {
+        ZStack {
+            // Background circular ring track
+            Circle()
+                .stroke(Color.white.opacity(0.18), lineWidth: 2.2)
+                .frame(width: size, height: size)
+            
+            // Active battery level ring
+            Circle()
+                .trim(from: 0, to: CGFloat(max(0.06, min(1.0, level))))
+                .stroke(
+                    ringColor,
+                    style: StrokeStyle(lineWidth: 2.2, lineCap: .round)
+                )
+                .frame(width: size, height: size)
+                .rotationEffect(.degrees(-90))
+            
+            // Subtle charging indicator
+            if isCharging {
+                Image(systemName: "bolt.fill")
+                    .font(.system(size: size * 0.48, weight: .bold))
+                    .foregroundColor(ringColor)
+            }
+        }
+        .frame(width: size, height: size)
+    }
+}
+
 // MARK: - Compact Clock View
 struct CompactClockView: View {
+    @ObservedObject var viewModel: NotchViewModel
     @State private var timeString = ""
     let timer = Timer.publish(every: 1.0, on: .main, in: .common).autoconnect()
     
     var body: some View {
         HStack(spacing: 8) {
+            // 1. Circular Battery Indicator
+            CircularBatteryRingView(
+                level: Double(viewModel.batteryLevel) / 100.0,
+                isCharging: viewModel.isBatteryCharging,
+                size: 13.5
+            )
+            
+            // 2. Day & Time
             Text(timeString)
-                .font(.system(size: 13, weight: .semibold, design: .rounded))
+                .font(.system(size: 12.5, weight: .semibold, design: .rounded))
                 .foregroundColor(.white)
             
+            // 3. Notch Mascot Eyes
             NotchMascotEyesView(state: .idle)
         }
         .onReceive(timer) { _ in updateTime() }
@@ -104,7 +161,7 @@ struct CompactClockView: View {
     
     private func updateTime() {
         let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm"
+        formatter.dateFormat = "EEE HH:mm"
         timeString = formatter.string(from: Date())
     }
 }

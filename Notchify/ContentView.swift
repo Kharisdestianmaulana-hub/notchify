@@ -78,8 +78,8 @@ struct ContentView: View {
         viewModel.selectedTab = tabs[prevIdx]
     }
     
-    private let clockWidth: CGFloat = 130
-    private let mediaWidth: CGFloat = 220
+    private let clockWidth: CGFloat = 175
+    private let mediaWidth: CGFloat = 265
     private let compactHeight: CGFloat = 34
     private let expandedWidth: CGFloat = 420
     private let expandedHeight: CGFloat = 175
@@ -91,7 +91,12 @@ struct ContentView: View {
     @State private var pauseGraceTimer: Timer? = nil
     
     private var currentWidth: CGFloat {
-        if viewModel.isExpanded { return expandedWidth }
+        if viewModel.isExpanded {
+            if viewModel.selectedTab == .media && viewModel.showMediaLyrics {
+                return 560
+            }
+            return expandedWidth
+        }
         if viewModel.showBatteryHUD { return 250 }
         if viewModel.showClipboardHUD { return 255 }
         if viewModel.showTimesUp { return 260 }
@@ -107,8 +112,7 @@ struct ContentView: View {
         if viewModel.isExpanded {
             if viewModel.selectedTab == .calculator { return 275 }
             if viewModel.selectedTab == .media {
-                if !viewModel.lyrics.isEmpty && enableLyrics { return 285 }
-                return viewModel.duration > 0 ? 152 : 142
+                return 165
             }
             if viewModel.selectedTab == .weather { return 165 }
             if viewModel.selectedTab == .system { return 215 }
@@ -450,7 +454,7 @@ struct ContentView: View {
                                 CompactPomodoroView(viewModel: viewModel)
                                     .transition(.opacity.combined(with: .scale(scale: 0.85)))
                             } else if viewModel.showClock {
-                                CompactClockView()
+                                CompactClockView(viewModel: viewModel)
                                     .transition(.opacity.combined(with: .scale(scale: 0.8)))
                             } else {
                                 CompactMediaView(viewModel: viewModel)
@@ -547,6 +551,7 @@ struct ContentView: View {
             .animation(.interactiveSpring(response: 0.5, dampingFraction: 0.55, blendDuration: 0), value: viewModel.showClipboardHUD)
             .animation(.interactiveSpring(response: 0.5, dampingFraction: 0.55, blendDuration: 0), value: viewModel.showAgendaHUD)
             .animation(.interactiveSpring(response: 0.4, dampingFraction: 0.65, blendDuration: 0), value: viewModel.selectedTab)
+            .animation(.interactiveSpring(response: 0.45, dampingFraction: 0.72, blendDuration: 0), value: viewModel.showMediaLyrics)
             .animation(.interactiveSpring(response: 0.45, dampingFraction: 0.6, blendDuration: 0), value: viewModel.lyrics.isEmpty)
             .animation(.interactiveSpring(response: 0.5, dampingFraction: 0.55, blendDuration: 0), value: isPomodoroInMainIsland)
             .offset(y: isHiddenByFullscreen ? -80 : 0)
