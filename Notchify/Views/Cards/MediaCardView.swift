@@ -355,44 +355,68 @@ struct MediaCardView: View {
             } else {
                 ScrollViewReader { proxy in
                     ScrollView(.vertical, showsIndicators: false) {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Spacer().frame(height: 36)
+                        VStack(alignment: .leading, spacing: 9) {
+                            // Generous top spacer so even the first line can be centered
+                            Color.clear.frame(height: 70)
+                            
                             ForEach(Array(viewModel.lyrics.enumerated()), id: \.element.id) { index, line in
                                 let isCurrent = index == viewModel.currentLyricIndex
                                 Button(action: {
                                     viewModel.seek(to: line.time)
                                 }) {
                                     Text(line.text)
-                                        .font(.system(size: isCurrent ? 15 : 13, weight: isCurrent ? .bold : .medium, design: .rounded))
+                                        .font(.system(size: isCurrent ? 15.5 : 13, weight: isCurrent ? .bold : .medium, design: .rounded))
                                         .foregroundColor(isCurrent ? .white : .white.opacity(0.35))
-                                        .shadow(color: isCurrent ? Color.white.opacity(0.35) : .clear, radius: 4)
+                                        .shadow(color: isCurrent ? Color.white.opacity(0.45) : .clear, radius: 5)
                                         .multilineTextAlignment(.leading)
                                         .fixedSize(horizontal: false, vertical: true)
-                                        .id(index)
                                         .animation(.spring(response: 0.35, dampingFraction: 0.72), value: viewModel.currentLyricIndex)
                                 }
                                 .buttonStyle(PlainButtonStyle())
+                                .id(index)
                             }
-                            Spacer().frame(height: 36)
+                            
+                            // Generous bottom spacer so even the last line can be centered
+                            Color.clear.frame(height: 70)
                         }
                         .padding(.horizontal, 8)
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     .mask(
                         LinearGradient(
-                            colors: [.clear, .black, .black, .black, .clear],
+                            stops: [
+                                .init(color: .clear, location: 0.0),
+                                .init(color: .black, location: 0.16),
+                                .init(color: .black, location: 0.84),
+                                .init(color: .clear, location: 1.0)
+                            ],
                             startPoint: .top,
                             endPoint: .bottom
                         )
                     )
                     .onChange(of: viewModel.currentLyricIndex) { idx in
-                        withAnimation(.easeInOut(duration: 0.45)) {
-                            proxy.scrollTo(idx, anchor: .center)
+                        if idx >= 0 {
+                            withAnimation(.easeInOut(duration: 0.4)) {
+                                proxy.scrollTo(idx, anchor: .center)
+                            }
+                        }
+                    }
+                    .onChange(of: viewModel.lyrics.count) { _ in
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                            if viewModel.currentLyricIndex >= 0 {
+                                withAnimation(.easeInOut(duration: 0.4)) {
+                                    proxy.scrollTo(viewModel.currentLyricIndex, anchor: .center)
+                                }
+                            }
                         }
                     }
                     .onAppear {
-                        if viewModel.currentLyricIndex >= 0 {
-                            proxy.scrollTo(viewModel.currentLyricIndex, anchor: .center)
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                            if viewModel.currentLyricIndex >= 0 {
+                                withAnimation(.easeInOut(duration: 0.4)) {
+                                    proxy.scrollTo(viewModel.currentLyricIndex, anchor: .center)
+                                }
+                            }
                         }
                     }
                 }
@@ -400,30 +424,51 @@ struct MediaCardView: View {
         }
     }
     
-    // MARK: - Tab Pagination Dots (Image 2 style: — • • • •)
+    // MARK: - Tab Pagination Dots (Dynamic matching enabled tabs)
+    private var availableTabs: [NotchTab] {
+        let tabOrderStr = UserDefaults.standard.string(forKey: "tabOrder") ?? ""
+        let hiddenTabsStr = UserDefaults.standard.string(forKey: "hiddenTabs") ?? ""
+        let order = tabOrderStr.split(separator: ",").compactMap { NotchTab.from(string: String($0)) }
+        let hidden = hiddenTabsStr.split(separator: ",").compactMap { NotchTab.from(string: String($0)) }
+        
+        var result: [NotchTab] = []
+        for tab in order {
+            if !hidden.contains(tab) && !result.contains(tab) {
+                result.append(tab)
+            }
+        }
+        for tab in NotchTab.allCases {
+            if !hidden.contains(tab) && !result.contains(tab) {
+                result.append(tab)
+            }
+        }
+        return result.isEmpty ? NotchTab.allCases : result
+    }
+    
     private var tabPaginationDots: some View {
         HStack(spacing: 5) {
-            Capsule()
-                .fill(Color.white.opacity(0.9))
-                .frame(width: 14, height: 3)
-            
-            Circle()
-                .fill(Color.white.opacity(0.3))
-                .frame(width: 3.5, height: 3.5)
-            
-            Circle()
-                .fill(Color.white.opacity(0.3))
-                .frame(width: 3.5, height: 3.5)
-            
-            Circle()
-                .fill(Color.white.opacity(0.3))
-                .frame(width: 3.5, height: 3.5)
-            
-            Circle()
-                .fill(Color.white.opacity(0.3))
-                .frame(width: 3.5, height: 3.5)
+            ForEach(availableTabs, id: \.self) { tab in
+                let isCurrent = tab == viewModel.selectedTab
+                Button(action: {
+                    withAnimation(.interactiveSpring(response: 0.35, dampingFraction: 0.72)) {
+                        viewModel.selectedTab = tab
+                    }
+                }) {
+                    if isCurrent {
+                        Capsule()
+                            .fill(Color.white.opacity(0.95))
+                            .frame(width: 14, height: 3.5)
+                    } else {
+                        Circle()
+                            .fill(Color.white.opacity(0.35))
+                            .frame(width: 3.5, height: 3.5)
+                    }
+                }
+                .buttonStyle(PlainButtonStyle())
+                .help(tab.displayName)
+            }
         }
-        .padding(.top, 1)
+        .padding(.top, 2)
     }
     
     private func formatTime(_ time: Double) -> String {

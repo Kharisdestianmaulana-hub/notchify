@@ -112,7 +112,7 @@ struct ContentView: View {
         if viewModel.isExpanded {
             if viewModel.selectedTab == .calculator { return 275 }
             if viewModel.selectedTab == .media {
-                return 165
+                return viewModel.showMediaLyrics ? 185 : 165
             }
             if viewModel.selectedTab == .weather { return 165 }
             if viewModel.selectedTab == .system { return 215 }

@@ -93,7 +93,7 @@ struct NotchPebbleGlossShape: Shape {
 
 // MARK: - Smiling / Zen Eye Arc (2D Vector Curve)
 struct MascotEyeArcShape: Shape {
-    var flipped: Bool // false: ^_^ happy, true: ◡ zen/sleepy
+    var flipped: Bool // false: ⌒ rounded smile arch, true: ◡ zen/chill
     
     init(flipped: Bool = false) {
         self.flipped = flipped
@@ -105,16 +105,33 @@ struct MascotEyeArcShape: Shape {
         let h = rect.height
         
         if flipped {
-            // Zen / Sleeping eye (crescent curving downwards)
+            // Zen / Sleeping / Chill eye (crescent curving downwards)
             path.move(to: CGPoint(x: 0, y: h * 0.35))
-            path.addQuadCurve(to: CGPoint(x: w, y: h * 0.35), control: CGPoint(x: w * 0.5, y: h * 0.95))
+            path.addCurve(
+                to: CGPoint(x: w, y: h * 0.35),
+                control1: CGPoint(x: w * 0.25, y: h * 0.90),
+                control2: CGPoint(x: w * 0.75, y: h * 0.90)
+            )
         } else {
-            // Happy smiling eye (anime/kawaii ^ curve)
+            // Happy smiling eye (soft rounded arch ⌒, NOT sharp triangle peak)
             path.move(to: CGPoint(x: 0, y: h * 0.75))
-            path.addQuadCurve(to: CGPoint(x: w, y: h * 0.75), control: CGPoint(x: w * 0.5, y: h * 0.08))
+            path.addCurve(
+                to: CGPoint(x: w, y: h * 0.75),
+                control1: CGPoint(x: w * 0.22, y: h * 0.12),
+                control2: CGPoint(x: w * 0.78, y: h * 0.12)
+            )
         }
         return path
     }
+}
+
+// MARK: - Music Vibe Expressions (Lively cycling while listening to music)
+enum MusicVibeState: CaseIterable {
+    case happySmile     // ⌒ ⌒
+    case wideEyes       // ● ●
+    case leftWink       // ⌒ ●
+    case rightWink      // ● ⌒
+    case chillVibe      // ◡ ◡
 }
 
 // MARK: - Notch Mascot Eyes View (Compact Pill & Embedded)
@@ -125,6 +142,7 @@ struct NotchMascotEyesView: View {
     
     @State private var isBlinking: Bool = false
     @State private var musicBounce: Bool = false
+    @State private var musicVibeState: MusicVibeState = .happySmile
     @State private var breakGlance: Bool = false
     @State private var zenBreath: Bool = false
     @State private var celebratePulse: Bool = false
@@ -136,6 +154,8 @@ struct NotchMascotEyesView: View {
     private let glanceTimer = Timer.publish(every: 5.2, on: .main, in: .common).autoconnect()
     // Timer for break glance
     private let breakTimer = Timer.publish(every: 2.2, on: .main, in: .common).autoconnect()
+    // Timer for dynamic music vibe cycling
+    private let musicVibeTimer = Timer.publish(every: 3.2, on: .main, in: .common).autoconnect()
     
     init(
         state: MascotEyeState,
@@ -174,6 +194,13 @@ struct NotchMascotEyesView: View {
                 }
             }
         }
+        .onReceive(musicVibeTimer) { _ in
+            if isMusicActive {
+                withAnimation(.spring(response: 0.38, dampingFraction: 0.68)) {
+                    cycleMusicVibe()
+                }
+            }
+        }
         .onAppear {
             setupInitialAnimations()
         }
@@ -186,63 +213,101 @@ struct NotchMascotEyesView: View {
     @ViewBuilder
     private func singleEyeView(isLeft: Bool) -> some View {
         let isWinkingEye = (state == .wink && isLeft)
-        let isMusicHappy = isMusicActive
         let isZenRest = isRestActive
         
         Group {
-            if isMusicHappy {
-                // Happy upward arc ^_^ bouncing to music
-                MascotEyeArcShape(flipped: false)
-                    .stroke(
-                        LinearGradient(
-                            colors: [eyeWarmFill, eyeInnerGleam],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        ),
-                        style: StrokeStyle(lineWidth: eyeSize.width * 0.44, lineCap: .round)
-                    )
-                    .frame(width: eyeSize.width * 1.25, height: eyeSize.height * 0.85)
+            if isMusicActive {
+                musicEyeView(isLeft: isLeft)
             } else if isZenRest {
                 // Peaceful sleeping crescent ◡ ◡ for 15m rest
-                MascotEyeArcShape(flipped: true)
-                    .stroke(
-                        LinearGradient(
-                            colors: [eyeWarmFill.opacity(zenBreath ? 1.0 : 0.75), eyeGlowColor.opacity(0.8)],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        ),
-                        style: StrokeStyle(lineWidth: eyeSize.width * 0.42, lineCap: .round)
-                    )
-                    .frame(width: eyeSize.width * 1.2, height: eyeSize.height * 0.8)
-                    .scaleEffect(zenBreath ? 1.06 : 0.96)
+                chillArcEyeView()
             } else if isWinkingEye {
                 // Winking eye (left eye winks shut)
-                MascotEyeArcShape(flipped: false)
-                    .stroke(
-                        eyeWarmFill,
-                        style: StrokeStyle(lineWidth: eyeSize.width * 0.44, lineCap: .round)
-                    )
-                    .frame(width: eyeSize.width * 1.2, height: eyeSize.height * 0.8)
+                smilingArcEyeView()
             } else {
                 // Glowing Capsule Eye (Open eye)
-                Capsule()
-                    .fill(
-                        RadialGradient(
-                            colors: [eyeInnerGleam, eyeWarmFill],
-                            center: .center,
-                            startRadius: 0,
-                            endRadius: eyeSize.height * 0.5
-                        )
-                    )
-                    .frame(
-                        width: eyeSize.width * eyeScaleX(isLeft: isLeft),
-                        height: max(1.2, eyeSize.height * (isBlinking ? 0.12 : eyeScaleY(isLeft: isLeft)))
-                    )
+                openCapsuleEyeView(isLeft: isLeft)
             }
         }
         .shadow(color: eyeGlowColor.opacity(0.75), radius: 3, x: 0, y: 0)
         .shadow(color: eyeGlowColor.opacity(0.35), radius: 6, x: 0, y: 0)
         .rotationEffect(.degrees(individualEyeRotation(isLeft: isLeft)))
+    }
+    
+    // MARK: - Dynamic Music Eye Rendering (Changes lively while listening to song)
+    @ViewBuilder
+    private func musicEyeView(isLeft: Bool) -> some View {
+        switch musicVibeState {
+        case .happySmile:
+            // Soft rounded smile arch ⌒ ⌒
+            smilingArcEyeView()
+        case .wideEyes:
+            // Big open eyes enjoying music ● ● (with blinks)
+            openCapsuleEyeView(isLeft: isLeft)
+        case .leftWink:
+            // Left eye winks ⌒, right eye open ●
+            if isLeft {
+                smilingArcEyeView()
+            } else {
+                openCapsuleEyeView(isLeft: isLeft)
+            }
+        case .rightWink:
+            // Left eye open ●, right eye winks ⌒
+            if isLeft {
+                openCapsuleEyeView(isLeft: isLeft)
+            } else {
+                smilingArcEyeView()
+            }
+        case .chillVibe:
+            // Relaxed melody immersion ◡ ◡
+            chillArcEyeView()
+        }
+    }
+    
+    @ViewBuilder
+    private func smilingArcEyeView() -> some View {
+        MascotEyeArcShape(flipped: false)
+            .stroke(
+                LinearGradient(
+                    colors: [eyeWarmFill, eyeInnerGleam],
+                    startPoint: .top,
+                    endPoint: .bottom
+                ),
+                style: StrokeStyle(lineWidth: eyeSize.width * 0.44, lineCap: .round)
+            )
+            .frame(width: eyeSize.width * 1.25, height: eyeSize.height * 0.85)
+    }
+    
+    @ViewBuilder
+    private func chillArcEyeView() -> some View {
+        MascotEyeArcShape(flipped: true)
+            .stroke(
+                LinearGradient(
+                    colors: [eyeWarmFill.opacity(zenBreath ? 1.0 : 0.75), eyeGlowColor.opacity(0.8)],
+                    startPoint: .top,
+                    endPoint: .bottom
+                ),
+                style: StrokeStyle(lineWidth: eyeSize.width * 0.42, lineCap: .round)
+            )
+            .frame(width: eyeSize.width * 1.2, height: eyeSize.height * 0.8)
+            .scaleEffect(zenBreath ? 1.06 : 0.96)
+    }
+    
+    @ViewBuilder
+    private func openCapsuleEyeView(isLeft: Bool) -> some View {
+        Capsule()
+            .fill(
+                RadialGradient(
+                    colors: [eyeInnerGleam, eyeWarmFill],
+                    center: .center,
+                    startRadius: 0,
+                    endRadius: eyeSize.height * 0.5
+                )
+            )
+            .frame(
+                width: eyeSize.width * eyeScaleX(isLeft: isLeft),
+                height: max(1.2, eyeSize.height * (isBlinking ? 0.12 : eyeScaleY(isLeft: isLeft)))
+            )
     }
     
     // MARK: - State Computed Properties
@@ -325,8 +390,21 @@ struct NotchMascotEyesView: View {
     }
     
     // MARK: - Animations
+    private func cycleMusicVibe() {
+        let sequence: [MusicVibeState] = [.happySmile, .wideEyes, .leftWink, .happySmile, .rightWink, .wideEyes, .chillVibe]
+        if let currentIdx = sequence.firstIndex(of: musicVibeState) {
+            let nextIdx = (currentIdx + 1) % sequence.count
+            musicVibeState = sequence[nextIdx]
+        } else {
+            musicVibeState = .happySmile
+        }
+    }
+    
     private func triggerBlink() {
-        guard !isBlinking && !isMusicActive && !isRestActive && state != .timesUp else { return }
+        guard !isBlinking && !isRestActive && state != .timesUp else { return }
+        // If music is active, only blink when wide open eyes are active
+        if isMusicActive && musicVibeState != .wideEyes { return }
+        
         withAnimation(.easeInOut(duration: 0.10)) {
             isBlinking = true
         }
@@ -364,6 +442,7 @@ struct NotchMascotEyesView: View {
                 }
             } else {
                 musicBounce = false
+                musicVibeState = .happySmile
             }
         case .pomodoro(.rest, _):
             withAnimation(.easeInOut(duration: 1.8).repeatForever(autoreverses: true)) {
@@ -529,8 +608,10 @@ struct NotchMascotCompanionView: View {
                     ? CGSize(width: 1.22, height: 0.82)
                     : (isHovered ? CGSize(width: 1.08, height: 1.08) : (breathing ? CGSize(width: 1.02, height: 1.02) : CGSize(width: 0.98, height: 0.98)))
             )
+            .rotationEffect(.degrees(viewModel.isPlaying ? (breathing ? -2.2 : 2.2) : 0))
             .animation(.spring(response: 0.32, dampingFraction: 0.58), value: isSquished)
             .animation(.easeInOut(duration: 0.18), value: isHovered)
+            .animation(.easeInOut(duration: 0.45).repeatForever(autoreverses: true), value: viewModel.isPlaying)
         }
         .buttonStyle(PlainButtonStyle())
         .help(LanguageManager.tr("Notchify Companion"))
