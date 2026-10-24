@@ -385,6 +385,7 @@ struct VideoRecordingIslandView: View {
                         .font(.system(size: 11.5, weight: .semibold, design: .rounded).monospacedDigit())
                         .foregroundColor(.white)
                 }
+                .contentShape(Rectangle())
             }
             .buttonStyle(PlainButtonStyle())
             
@@ -407,6 +408,8 @@ struct VideoRecordingIslandView: View {
                         .font(.system(size: 7.5, weight: .bold))
                         .foregroundColor(isStopHovered ? .white : Color(red: 1.0, green: 0.35, blue: 0.35))
                 }
+                .frame(width: 22, height: 22)
+                .contentShape(Rectangle())
                 .scaleEffect(isStopHovered ? 1.08 : 1.0)
             }
             .buttonStyle(PlainButtonStyle())

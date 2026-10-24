@@ -13,7 +13,11 @@ class CameraMirrorManager: NSObject, ObservableObject, AVCapturePhotoCaptureDele
     @Published var isFrozen = false
     
     // Mode
-    @Published var captureMode: CameraCaptureMode = .photo
+    @Published var captureMode: CameraCaptureMode = .photo {
+        didSet {
+            updateOutputsForMode(captureMode)
+        }
+    }
     
     // Photo capture states
     @Published var isTimerEnabled = false // false = instant, true = 3s
@@ -153,19 +157,49 @@ class CameraMirrorManager: NSObject, ObservableObject, AVCapturePhotoCaptureDele
             }
         }
         
-        // Photo Output
-        if session.canAddOutput(photoOutput) {
-            session.addOutput(photoOutput)
-        }
-        
-        // Movie Output (Hard-capped at 5 minutes = 300 seconds)
+        // Configure output based on current mode
         movieOutput.maxRecordedDuration = CMTime(seconds: 300, preferredTimescale: 600)
-        if session.canAddOutput(movieOutput) {
-            session.addOutput(movieOutput)
+        if captureMode == .video {
+            if session.canAddOutput(movieOutput) {
+                session.addOutput(movieOutput)
+            }
+        } else {
+            if session.canAddOutput(photoOutput) {
+                session.addOutput(photoOutput)
+            }
         }
         
         session.commitConfiguration()
         self.isConfigured = true
+    }
+    
+    func updateOutputsForMode(_ mode: CameraCaptureMode) {
+        guard isConfigured else { return }
+        sessionQueue.async { [weak self] in
+            guard let self = self else { return }
+            self.session.beginConfiguration()
+            if mode == .video {
+                if self.session.outputs.contains(self.photoOutput) {
+                    self.session.removeOutput(self.photoOutput)
+                }
+                if !self.session.outputs.contains(self.movieOutput) {
+                    self.movieOutput.maxRecordedDuration = CMTime(seconds: 300, preferredTimescale: 600)
+                    if self.session.canAddOutput(self.movieOutput) {
+                        self.session.addOutput(self.movieOutput)
+                    }
+                }
+            } else {
+                if self.session.outputs.contains(self.movieOutput) {
+                    self.session.removeOutput(self.movieOutput)
+                }
+                if !self.session.outputs.contains(self.photoOutput) {
+                    if self.session.canAddOutput(self.photoOutput) {
+                        self.session.addOutput(self.photoOutput)
+                    }
+                }
+            }
+            self.session.commitConfiguration()
+        }
     }
     
     // MARK: - Capture Sequence
@@ -295,10 +329,23 @@ class CameraMirrorManager: NSObject, ObservableObject, AVCapturePhotoCaptureDele
     func startVideoRecording() {
         guard !isRecordingVideo else { return }
         
+        // Ensure movieOutput is attached to session
+        if !session.outputs.contains(movieOutput) {
+            session.beginConfiguration()
+            if session.outputs.contains(photoOutput) {
+                session.removeOutput(photoOutput)
+            }
+            if session.canAddOutput(movieOutput) {
+                movieOutput.maxRecordedDuration = CMTime(seconds: 300, preferredTimescale: 600)
+                session.addOutput(movieOutput)
+            }
+            session.commitConfiguration()
+        }
+        
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd_HHmmss"
         let dateStr = formatter.string(from: Date())
-        let filename = "Notchify_Video_\(dateStr).mp4"
+        let filename = "Notchify_Video_\(dateStr).mov"
         let targetDirectory = PhotoStorageManager.getPhotosDirectory()
         let fileURL = targetDirectory.appendingPathComponent(filename)
         
@@ -342,7 +389,16 @@ class CameraMirrorManager: NSObject, ObservableObject, AVCapturePhotoCaptureDele
         guard isRecordingVideo else { return }
         recordingTimer?.invalidate()
         recordingTimer = nil
-        movieOutput.stopRecording()
+        
+        // Immediate UI feedback on main thread
+        DispatchQueue.main.async {
+            self.isRecordingVideo = false
+            PrivacyMonitor.shared.isMicActive = false
+        }
+        
+        if movieOutput.isRecording {
+            movieOutput.stopRecording()
+        }
     }
     
     // MARK: - AVCaptureFileOutputRecordingDelegate

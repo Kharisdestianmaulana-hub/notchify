@@ -391,7 +391,9 @@ struct MirrorCardView: View {
                     if cameraManager.isRecordingVideo {
                         // STOP RECORDING BUTTON
                         Button(action: {
-                            cameraManager.stopVideoRecording()
+                            withAnimation(.interactiveSpring(response: 0.36, dampingFraction: 0.76)) {
+                                cameraManager.stopVideoRecording()
+                            }
                         }) {
                             ZStack {
                                 Circle()
@@ -402,6 +404,8 @@ struct MirrorCardView: View {
                                     .fill(Color.red)
                                     .frame(width: 15, height: 15)
                             }
+                            .frame(width: 44, height: 44)
+                            .contentShape(Circle())
                         }
                         .buttonStyle(PlainButtonStyle())
                         .help(LanguageManager.tr("Stop Recording"))
