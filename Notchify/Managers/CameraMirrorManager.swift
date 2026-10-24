@@ -110,10 +110,8 @@ class CameraMirrorManager: NSObject, ObservableObject, AVCapturePhotoCaptureDele
     }
     
     func stopSession() {
+        guard !isRecordingVideo else { return }
         cancelCountdown()
-        if isRecordingVideo {
-            stopVideoRecording()
-        }
         sessionQueue.async { [weak self] in
             guard let self = self else { return }
             guard self.session.isRunning else { return }

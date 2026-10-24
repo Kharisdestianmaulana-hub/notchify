@@ -49,7 +49,7 @@ struct InTabVideoPlayerView: View {
 
 struct MirrorCardView: View {
     @ObservedObject var viewModel: NotchViewModel
-    @StateObject private var cameraManager = CameraMirrorManager.shared
+    @ObservedObject private var cameraManager = CameraMirrorManager.shared
     @State private var isViewingMedia = false
     @State private var showCopiedFeedback = false
     @State private var copiedFeedbackText = ""
