@@ -8,6 +8,7 @@ import Network
 import SystemConfiguration
 import CoreMediaIO
 import CoreAudio
+import ImageIO
 
 // MARK: - Models
 enum NotchTab: String, CaseIterable, Identifiable, Codable {
@@ -435,21 +436,24 @@ class NotchViewModel: ObservableObject {
                     }
                 }
                 
-                // Always update artwork, so asynchronous iTunes fetches can overwrite the fallback Chrome icon
-                self.artwork = img
-                self.isPlaying = isPlaying
-                
-                // Extract dominant color for glow
-                if let artImg = img {
-                    DispatchQueue.global(qos: .userInitiated).async {
-                        let color = Self.extractDominantColor(from: artImg)
-                        DispatchQueue.main.async {
-                            self.accentColor = color
+                // Only update artwork and re-extract glow color if artwork instance changed
+                if self.artwork !== img {
+                    self.artwork = img
+                    
+                    if let artImg = img {
+                        DispatchQueue.global(qos: .userInitiated).async {
+                            let color = Self.extractDominantColor(from: artImg)
+                            DispatchQueue.main.async {
+                                if self.accentColor != color {
+                                    self.accentColor = color
+                                }
+                            }
                         }
+                    } else {
+                        self.accentColor = .clear
                     }
-                } else {
-                    self.accentColor = .clear
                 }
+                self.isPlaying = isPlaying
                 
                 // Sync elapsed time aggressively for accurate lyrics
                 self.duration = duration
@@ -477,7 +481,10 @@ class NotchViewModel: ObservableObject {
             } else {
                 self.currentSong = "No Media Playing"
                 self.currentArtist = ""
-                self.artwork = nil
+                if self.artwork != nil {
+                    self.artwork = nil
+                    self.accentColor = .clear
+                }
                 self.isPlaying = false
                 self.duration = 0
                 self.elapsed = 0
@@ -886,31 +893,36 @@ class SmartClipboardDetector {
     }
     
     static func extractDominantColor(from image: NSImage) -> Color {
-        guard let tiffData = image.tiffRepresentation,
-              let bitmap = NSBitmapImageRep(data: tiffData),
-              let ciImage = CIImage(bitmapImageRep: bitmap) else { return .clear }
+        var cgImage: CGImage? = image.cgImage(forProposedRect: nil, context: nil, hints: nil)
+        if cgImage == nil, let tiffData = image.tiffRepresentation, let source = CGImageSourceCreateWithData(tiffData as CFData, nil) {
+            cgImage = CGImageSourceCreateImageAtIndex(source, 0, nil)
+        }
+        guard let sourceImage = cgImage else { return .clear }
         
-        let size = 16 // Sample small area for speed
-        let extent = ciImage.extent
-        let scaleX = CGFloat(size) / extent.width
-        let scaleY = CGFloat(size) / extent.height
-        let scaled = ciImage.transformed(by: CGAffineTransform(scaleX: scaleX, y: scaleY))
+        let size = 16
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        var pixelData = [UInt8](repeating: 0, count: size * size * 4)
+        guard let context = CGContext(
+            data: &pixelData,
+            width: size,
+            height: size,
+            bitsPerComponent: 8,
+            bytesPerRow: size * 4,
+            space: colorSpace,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return .clear }
         
-        let context = CIContext(options: [.useSoftwareRenderer: false])
-        guard let cgImage = context.createCGImage(scaled, from: CGRect(x: 0, y: 0, width: size, height: size)) else { return .clear }
-        
-        guard let data = cgImage.dataProvider?.data,
-              let ptr = CFDataGetBytePtr(data) else { return .clear }
+        context.interpolationQuality = .low
+        context.draw(sourceImage, in: CGRect(x: 0, y: 0, width: size, height: size))
         
         var totalR: CGFloat = 0, totalG: CGFloat = 0, totalB: CGFloat = 0
-        let bytesPerPixel = cgImage.bitsPerPixel / 8
         let count = size * size
         
         for i in 0..<count {
-            let offset = i * bytesPerPixel
-            totalR += CGFloat(ptr[offset])
-            totalG += CGFloat(ptr[offset + 1])
-            totalB += CGFloat(ptr[offset + 2])
+            let offset = i * 4
+            totalR += CGFloat(pixelData[offset])
+            totalG += CGFloat(pixelData[offset + 1])
+            totalB += CGFloat(pixelData[offset + 2])
         }
         
         let n = CGFloat(count)
@@ -4310,6 +4322,26 @@ class MediaRemoteHelper {
         }
     }
     
+    // MARK: - Memory-Efficient Downsampling
+    static func downsample(data: Data, maxDimension: CGFloat = 128) -> NSImage? {
+        let options: [CFString: Any] = [
+            kCGImageSourceShouldCache: false
+        ]
+        guard let source = CGImageSourceCreateWithData(data as CFData, options as CFDictionary) else {
+            return nil
+        }
+        let downsampleOptions: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxDimension
+        ]
+        guard let downsampledImage = CGImageSourceCreateThumbnailAtIndex(source, 0, downsampleOptions as CFDictionary) else {
+            return nil
+        }
+        return NSImage(cgImage: downsampledImage, size: NSSize(width: downsampledImage.width, height: downsampledImage.height))
+    }
+    
     // MARK: - App Running & AppleScript Helpers
     private func isAppRunning(_ bundleId: String) -> Bool {
         return NSWorkspace.shared.runningApplications.contains(where: { $0.bundleIdentifier == bundleId })
@@ -4573,7 +4605,7 @@ class MediaRemoteHelper {
             self.activePlayerName = detectedAppName ?? "Media Player"
             
             if let artworkData = info["kMRMediaRemoteNowPlayingInfoArtworkData"] as? Data, artworkData.count > 0 {
-                let img = NSImage(data: artworkData)
+                let img = Self.downsample(data: artworkData, maxDimension: 128) ?? NSImage(data: artworkData)
                 self.cachedArtwork = img
                 self.lastQuery = ""
                 DispatchQueue.main.async {
@@ -4727,7 +4759,7 @@ class MediaRemoteHelper {
                 URLSession.shared.dataTask(with: artUrl) { [weak self] data, _, _ in
                     var img: NSImage? = nil
                     if let data = data {
-                        img = NSImage(data: data)
+                        img = Self.downsample(data: data, maxDimension: 128) ?? NSImage(data: data)
                         self?.spotifyCachedArtwork = img
                     }
                     DispatchQueue.main.async {
@@ -4780,7 +4812,7 @@ class MediaRemoteHelper {
             getNowPlayingInfo(DispatchQueue.global(qos: .userInitiated)) { [weak self] info in
                 guard let self = self else { return }
                 if let artworkData = info["kMRMediaRemoteNowPlayingInfoArtworkData"] as? Data, artworkData.count > 0,
-                   let img = NSImage(data: artworkData) {
+                   let img = Self.downsample(data: artworkData, maxDimension: 128) ?? NSImage(data: artworkData) {
                     self.cachedArtwork = img
                     DispatchQueue.main.async {
                         completion(title, artistStr, img, isPlaying, duration, elapsed, bundleId, appName)
@@ -4837,21 +4869,14 @@ class MediaRemoteHelper {
                 return
             }
             
-            // 1. Instantly yield low-res image for fast UI updates
-            if let lowResUrl = URL(string: artworkUrl) {
-                URLSession.shared.dataTask(with: lowResUrl) { imgData, _, _ in
-                    if let data = imgData, let lowResImage = NSImage(data: data) {
-                        completion(lowResImage)
-                    }
-                    
-                    // 2. Fetch high-res image in background
-                    let highResUrlString = artworkUrl.replacingOccurrences(of: "100x100bb", with: "600x600bb")
-                    if let highResUrl = URL(string: highResUrlString) {
-                        URLSession.shared.dataTask(with: highResUrl) { highData, _, _ in
-                            if let data = highData, let highResImage = NSImage(data: data) {
-                                completion(highResImage)
-                            }
-                        }.resume()
+            // Single optimal 200x200 image fetch (plenty for Retina 48x48)
+            let optimalUrlString = artworkUrl.replacingOccurrences(of: "100x100bb", with: "200x200bb")
+            if let targetUrl = URL(string: optimalUrlString) {
+                URLSession.shared.dataTask(with: targetUrl) { imgData, _, _ in
+                    if let data = imgData, let optimalImage = Self.downsample(data: data, maxDimension: 128) ?? NSImage(data: data) {
+                        completion(optimalImage)
+                    } else {
+                        completion(nil)
                     }
                 }.resume()
             } else {
