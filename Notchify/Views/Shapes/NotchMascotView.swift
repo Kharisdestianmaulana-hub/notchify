@@ -218,6 +218,185 @@ enum LivingExpression: Equatable {
     case pomodoroFocus           // (•̀ ⤙ •́)
 }
 
+// MARK: - Mascot Animation Manager (Living Choreography Engine)
+@MainActor
+final class MascotAnimationManager: ObservableObject {
+    static let shared = MascotAnimationManager()
+    
+    @Published var currentIdleExpression: LivingExpression = .openLookCenter
+    @Published var currentMusicExpression: LivingExpression = .musicSmile
+    @Published var musicBeatBounce: Bool = false
+    @Published var isBlinking: Bool = false
+    @Published var breathingPulse: Bool = false
+    @Published var starTwinkle: Bool = false
+    @Published var notesScanOffset: CGFloat = 0
+    @Published var wakeUpJump: CGFloat = 0
+    
+    private var idleTimer: Timer?
+    private var musicTimer: Timer?
+    private var blinkTimer: Timer?
+    private var notesTimer: Timer?
+    private var breathingTimer: Timer?
+    
+    private var idleCycleIndex: Int = 0
+    private var musicVibeIndex: Int = 0
+    
+    private init() {
+        startLivingMotion()
+    }
+    
+    func startLivingMotion() {
+        // 1. Idle Loop Timer (2.85s cycle, continuously rotating through living expressions)
+        idleTimer?.invalidate()
+        let iTimer = Timer(timeInterval: 2.85, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.advanceLivingIdleLoop()
+            }
+        }
+        RunLoop.main.add(iTimer, forMode: .common)
+        idleTimer = iTimer
+        
+        // 2. Music Beat Groove (1.05s per beat, head-bobbing and vibe rotation)
+        musicTimer?.invalidate()
+        let mTimer = Timer(timeInterval: 1.05, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.advanceLivingMusicLoop()
+            }
+        }
+        RunLoop.main.add(mTimer, forMode: .common)
+        musicTimer = mTimer
+        
+        // 3. Natural Organic Blinking (2.9s with double-blink probability)
+        blinkTimer?.invalidate()
+        let bTimer = Timer(timeInterval: 2.9, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.triggerOrganicBlink()
+            }
+        }
+        RunLoop.main.add(bTimer, forMode: .common)
+        blinkTimer = bTimer
+        
+        // 4. Notes Reading Scan (1.15s)
+        notesTimer?.invalidate()
+        let nTimer = Timer(timeInterval: 1.15, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                withAnimation(.easeInOut(duration: 0.4)) {
+                    self?.notesScanOffset = (self?.notesScanOffset == -1.4) ? 1.4 : -1.4
+                }
+            }
+        }
+        RunLoop.main.add(nTimer, forMode: .common)
+        notesTimer = nTimer
+        
+        // 5. Breathing and Star Pulse (2.2s gentle pulse)
+        breathingTimer?.invalidate()
+        let brTimer = Timer(timeInterval: 2.2, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                withAnimation(.easeInOut(duration: 2.2)) {
+                    self?.breathingPulse.toggle()
+                }
+                withAnimation(.easeInOut(duration: 0.85)) {
+                    self?.starTwinkle.toggle()
+                }
+            }
+        }
+        RunLoop.main.add(brTimer, forMode: .common)
+        breathingTimer = brTimer
+    }
+    
+    func advanceLivingIdleLoop() {
+        let hour = Calendar.current.component(.hour, from: Date())
+        let isLateNight = (hour >= 22 || hour < 6)
+        
+        let idlePool: [LivingExpression] = isLateNight
+            ? [.openLookCenter, .zenRelax, .glanceClock, .zenRelax, .happySmile, .deepSleep]
+            : [
+                .openLookCenter,
+                .glanceClock,
+                .happySmile,
+                .openLookCenter,
+                .glanceBattery,
+                .winkLeft,
+                .zenRelax,
+                .openLookCenter,
+                .winkRight,
+                .happySmile
+            ]
+        
+        idleCycleIndex = (idleCycleIndex + 1) % idlePool.count
+        let nextExp = idlePool[idleCycleIndex]
+        
+        withAnimation(.interactiveSpring(response: 0.32, dampingFraction: 0.72, blendDuration: 0.08)) {
+            self.currentIdleExpression = nextExp
+        }
+    }
+    
+    func advanceLivingMusicLoop() {
+        withAnimation(.interactiveSpring(response: 0.32, dampingFraction: 0.65)) {
+            self.musicBeatBounce.toggle()
+        }
+        
+        let musicPool: [LivingExpression] = [
+            .musicSmile,
+            .musicWide,
+            .musicWinkLeft,
+            .musicSmile,
+            .musicWinkRight,
+            .musicZen
+        ]
+        
+        musicVibeIndex = (musicVibeIndex + 1) % musicPool.count
+        let nextVibe = musicPool[musicVibeIndex]
+        
+        withAnimation(.interactiveSpring(response: 0.30, dampingFraction: 0.70)) {
+            self.currentMusicExpression = nextVibe
+        }
+    }
+    
+    func triggerWakeUpPerk() {
+        withAnimation(.spring(response: 0.25, dampingFraction: 0.50)) {
+            wakeUpJump = -4.0
+        }
+        
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) {
+            withAnimation(.spring(response: 0.28, dampingFraction: 0.60)) {
+                self.wakeUpJump = 0
+            }
+        }
+        
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+            self.triggerOrganicBlink()
+        }
+    }
+    
+    func triggerOrganicBlink() {
+        guard !isBlinking else { return }
+        
+        withAnimation(.easeInOut(duration: 0.09)) {
+            isBlinking = true
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.10) {
+            withAnimation(.spring(response: 0.20, dampingFraction: 0.65)) {
+                self.isBlinking = false
+            }
+            
+            // 25% chance of realistic double-blink
+            if Double.random(in: 0...1) < 0.25 {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.11) {
+                    withAnimation(.easeInOut(duration: 0.08)) {
+                        self.isBlinking = true
+                    }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.09) {
+                        withAnimation(.spring(response: 0.18, dampingFraction: 0.65)) {
+                            self.isBlinking = false
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 // MARK: - Notch Mascot Eyes View (Compact Pill & Embedded)
 struct NotchMascotEyesView: View {
     let state: MascotEyeState
@@ -225,27 +404,7 @@ struct NotchMascotEyesView: View {
     var spacing: CGFloat = 4.2
     var cursorOffset: CGSize = .zero // Normalized cursor vector (-1...1, -1...1)
     
-    // Living expression state
-    @State private var currentExpression: LivingExpression = .openLookCenter
-    @State private var isBlinking: Bool = false
-    @State private var breathingPulse: Bool = false
-    @State private var starTwinkle: Bool = false
-    @State private var musicBeatBounce: Bool = false
-    @State private var musicVibeIndex: Int = 0
-    @State private var idleCycleIndex: Int = 0
-    @State private var notesScanOffset: CGFloat = 0
-    @State private var lastInteractionCheck: Date = Date()
-    @State private var wakeUpJump: CGFloat = 0
-    
-    // Real-Time Timers (Agile & Apple-like)
-    // Idle transitions every 2.8s (range 2.5 - 3.5s)
-    private let idleTimer = Timer.publish(every: 2.85, on: .main, in: .common).autoconnect()
-    // Music groove runs lively at 1.05s per beat
-    private let musicTimer = Timer.publish(every: 1.08, on: .main, in: .common).autoconnect()
-    // Organic blinking timer
-    private let blinkTimer = Timer.publish(every: 2.8, on: .main, in: .common).autoconnect()
-    // Notes reading scanner
-    private let notesTimer = Timer.publish(every: 1.15, on: .main, in: .common).autoconnect()
+    @ObservedObject private var animManager = MascotAnimationManager.shared
     
     init(
         state: MascotEyeState,
@@ -265,45 +424,94 @@ struct NotchMascotEyesView: View {
     private let eyeGlowColor = Color(red: 1.0, green: 0.82, blue: 0.38)
     private let chargingGreenColor = Color(red: 0.40, green: 0.95, blue: 0.25)
     
+    // Dynamic expression resolution driven reactively by animManager
+    private var currentExpression: LivingExpression {
+        switch state {
+        case .petted:
+            return .pettedSquint
+        case .wakeUp:
+            return animManager.wakeUpJump < 0 ? .wakeUpShock : .happySmile
+        case .deepIdle:
+            return .deepSleep
+        case .videoRecording:
+            return .sentinelWebcam
+        case .batteryLow:
+            return .sleepy
+        case .batteryCharging:
+            return .celebrationHop
+        case .timesUp:
+            return .celebrationHop
+        case .music(let isPlaying, let isNewTrack):
+            if isNewTrack {
+                return .celebrationHop
+            } else if isPlaying {
+                return animManager.currentMusicExpression
+            } else {
+                return .musicPaused
+            }
+        case .pomodoro(let preset, let isPaused):
+            if isPaused {
+                return .openLookCenter
+            }
+            switch preset {
+            case .focus:
+                return .pomodoroFocus
+            case .shortBreak:
+                return animManager.currentIdleExpression == .happySmile ? .happySmile : .openLookCenter
+            case .rest:
+                return .deepSleep
+            case .custom:
+                return .openLookCenter
+            }
+        case .tabVibe(let tab):
+            switch tab {
+            case .mirror:
+                return .happySmile
+            case .dropzone:
+                return .glanceDown
+            case .notes:
+                return .openLookCenter
+            case .weather:
+                return animManager.currentIdleExpression == .happySmile ? .happySmile : .openLookCenter
+            case .media:
+                return .happySmile
+            default:
+                return animManager.currentIdleExpression
+            }
+        case .idle:
+            return animManager.currentIdleExpression
+        case .wink:
+            return .winkLeft
+        }
+    }
+    
+    private var isNotesTab: Bool {
+        if case .tabVibe(let tab) = state, tab == .notes {
+            return true
+        }
+        return false
+    }
+    
     var body: some View {
         HStack(spacing: spacing) {
             singleEyeView(isLeft: true)
             singleEyeView(isLeft: false)
         }
-        .offset(x: notesScanOffset)
-        .offset(y: currentEyeYOffset + wakeUpJump)
+        .offset(x: isNotesTab ? animManager.notesScanOffset : 0)
+        .offset(y: currentEyeYOffset + animManager.wakeUpJump)
         .scaleEffect(
             currentExpression == .wakeUpShock
                 ? 1.18
                 : (currentExpression == .celebrationHop
                    ? 1.22
-                   : (breathingPulse ? 1.03 : 0.97))
+                   : (animManager.breathingPulse ? 1.03 : 0.97))
         )
         .rotationEffect(.degrees(currentOverallRotation))
         .animation(.interactiveSpring(response: 0.32, dampingFraction: 0.72, blendDuration: 0.08), value: currentExpression)
-        .onReceive(idleTimer) { _ in
-            advanceLivingIdleLoop()
-        }
-        .onReceive(musicTimer) { _ in
-            advanceLivingMusicLoop()
-        }
-        .onReceive(blinkTimer) { _ in
-            triggerOrganicBlink()
-        }
-        .onReceive(notesTimer) { _ in
-            if case .tabVibe(let tab) = state, tab == .notes {
-                withAnimation(.easeInOut(duration: 0.4)) {
-                    notesScanOffset = (notesScanOffset == -1.4) ? 1.4 : -1.4
-                }
-            } else {
-                notesScanOffset = 0
-            }
-        }
-        .onAppear {
-            setupInitialLivingMotion()
-        }
         .onChange(of: state) { newState in
-            handleStateTransition(to: newState)
+            if newState == .wakeUp {
+                animManager.triggerWakeUpPerk()
+            }
         }
     }
     
@@ -377,7 +585,7 @@ struct NotchMascotEyesView: View {
             }
         }
         .shadow(
-            color: activeGlowColor.opacity(breathingPulse ? 0.85 : 0.45),
+            color: activeGlowColor.opacity(animManager.breathingPulse ? 0.85 : 0.45),
             radius: (currentExpression == .celebrationHop || state == .batteryCharging) ? 5 : 3,
             x: 0,
             y: 0
@@ -442,7 +650,7 @@ struct NotchMascotEyesView: View {
                 style: StrokeStyle(lineWidth: eyeSize.width * 0.42, lineCap: .round)
             )
             .frame(width: eyeSize.width * 1.2, height: eyeSize.height * 0.8)
-            .scaleEffect(zenSleep ? (breathingPulse ? 1.08 : 0.94) : 1.0)
+            .scaleEffect(zenSleep ? (animManager.breathingPulse ? 1.08 : 0.94) : 1.0)
     }
     
     @ViewBuilder
@@ -473,8 +681,8 @@ struct NotchMascotEyesView: View {
                 )
             )
             .frame(width: eyeSize.width * 1.35, height: eyeSize.height * 1.1)
-            .scaleEffect(starTwinkle ? 1.15 : 0.92)
-            .rotationEffect(.degrees(starTwinkle ? 12 : -12))
+            .scaleEffect(animManager.starTwinkle ? 1.15 : 0.92)
+            .rotationEffect(.degrees(animManager.starTwinkle ? 12 : -12))
     }
     
     @ViewBuilder
@@ -524,14 +732,14 @@ struct NotchMascotEyesView: View {
         }
         .frame(
             width: eyeSize.width * (forceWide ? 1.22 : (isFocusedGaze ? 1.15 : 1.0)),
-            height: max(1.2, eyeSize.height * (isBlinking ? 0.08 : (isFocusedGaze ? 0.76 : (forceWide ? 1.18 : 1.0))))
+            height: max(1.2, eyeSize.height * (animManager.isBlinking ? 0.08 : (isFocusedGaze ? 0.76 : (forceWide ? 1.18 : 1.0))))
         )
     }
     
     // MARK: - Dynamic Motion & Rotation Offsets
     private var currentEyeYOffset: CGFloat {
         if isMusicActive {
-            return musicBeatBounce ? -2.6 : 0.8
+            return animManager.musicBeatBounce ? -2.6 : 0.8
         }
         if currentExpression == .celebrationHop {
             return -4.5
@@ -544,7 +752,7 @@ struct NotchMascotEyesView: View {
     
     private var currentOverallRotation: Double {
         if isMusicActive {
-            return musicBeatBounce ? -3.5 : 3.5
+            return animManager.musicBeatBounce ? -3.5 : 3.5
         }
         switch currentExpression {
         case .musicPaused:
@@ -586,258 +794,6 @@ struct NotchMascotEyesView: View {
             return isPlaying
         }
         return false
-    }
-    
-    // MARK: - Real-Time Choreography Engines
-    private func advanceLivingIdleLoop() {
-        guard !isMusicActive, state != .petted, state != .videoRecording else { return }
-        
-        if state == .wakeUp {
-            triggerWakeUpPerk()
-            return
-        }
-        
-        if state == .deepIdle {
-            withAnimation(.interactiveSpring(response: 0.35, dampingFraction: 0.70)) {
-                currentExpression = .deepSleep
-            }
-            return
-        }
-        
-        if state == .batteryLow {
-            withAnimation(.interactiveSpring(response: 0.35, dampingFraction: 0.70)) {
-                currentExpression = .sleepy
-            }
-            return
-        }
-        
-        if state == .batteryCharging {
-            withAnimation(.interactiveSpring(response: 0.32, dampingFraction: 0.65)) {
-                currentExpression = .celebrationHop
-            }
-            return
-        }
-        
-        if state == .timesUp {
-            withAnimation(.interactiveSpring(response: 0.28, dampingFraction: 0.55)) {
-                currentExpression = .celebrationHop
-            }
-            return
-        }
-        
-        if case .tabVibe(let tab) = state {
-            handleTabVibe(tab: tab)
-            return
-        }
-        
-        if case .pomodoro(let preset, let isPaused) = state {
-            if isPaused {
-                withAnimation(.interactiveSpring(response: 0.32, dampingFraction: 0.70)) {
-                    currentExpression = .openLookCenter
-                }
-            } else {
-                switch preset {
-                case .focus:
-                    currentExpression = .pomodoroFocus
-                case .shortBreak:
-                    currentExpression = (idleCycleIndex % 2 == 0) ? .happySmile : .openLookCenter
-                case .rest:
-                    currentExpression = .deepSleep
-                case .custom:
-                    currentExpression = .openLookCenter
-                }
-            }
-            return
-        }
-        
-        // Idle Sequence Loop (2.5 - 3.5s tempo, natural Apple flow)
-        let hour = Calendar.current.component(.hour, from: Date())
-        let isLateNight = (hour >= 22 || hour < 6)
-        
-        // Late night favors soothing zen and calm eyes
-        let idlePool: [LivingExpression] = isLateNight
-            ? [.openLookCenter, .zenRelax, .glanceClock, .zenRelax, .happySmile, .deepSleep]
-            : [
-                .openLookCenter,
-                .glanceClock,
-                .happySmile,
-                .openLookCenter,
-                .glanceBattery,
-                .winkLeft,
-                .zenRelax,
-                .openLookCenter,
-                .winkRight,
-                .happySmile
-            ]
-        
-        idleCycleIndex = (idleCycleIndex + 1) % idlePool.count
-        let nextExp = idlePool[idleCycleIndex]
-        
-        withAnimation(.interactiveSpring(response: 0.32, dampingFraction: 0.72, blendDuration: 0.08)) {
-            currentExpression = nextExp
-        }
-    }
-    
-    private func advanceLivingMusicLoop() {
-        guard isMusicActive else { return }
-        
-        // Check new track celebration override
-        if case .music(_, let isNewTrack) = state, isNewTrack {
-            withAnimation(.spring(response: 0.28, dampingFraction: 0.55)) {
-                currentExpression = .celebrationHop
-            }
-            return
-        }
-        
-        // Alternate bounce
-        withAnimation(.interactiveSpring(response: 0.32, dampingFraction: 0.65)) {
-            musicBeatBounce.toggle()
-        }
-        
-        // Cycle lively music vibe expressions (1.0 - 1.2s per beat)
-        let musicPool: [LivingExpression] = [
-            .musicSmile,
-            .musicWide,
-            .musicWinkLeft,
-            .musicSmile,
-            .musicWinkRight,
-            .musicZen
-        ]
-        
-        musicVibeIndex = (musicVibeIndex + 1) % musicPool.count
-        let nextVibe = musicPool[musicVibeIndex]
-        
-        withAnimation(.interactiveSpring(response: 0.30, dampingFraction: 0.70)) {
-            currentExpression = nextVibe
-        }
-    }
-    
-    private func handleTabVibe(tab: NotchTab) {
-        switch tab {
-        case .mirror:
-            withAnimation(.interactiveSpring(response: 0.32, dampingFraction: 0.72)) {
-                currentExpression = .happySmile // Selfie ready!
-            }
-        case .dropzone:
-            withAnimation(.interactiveSpring(response: 0.32, dampingFraction: 0.72)) {
-                currentExpression = .glanceDown // Anticipating files
-            }
-        case .notes:
-            withAnimation(.interactiveSpring(response: 0.32, dampingFraction: 0.72)) {
-                currentExpression = .openLookCenter
-            }
-        case .weather:
-            withAnimation(.interactiveSpring(response: 0.32, dampingFraction: 0.72)) {
-                currentExpression = (idleCycleIndex % 2 == 0) ? .openLookCenter : .happySmile
-            }
-        case .media:
-            withAnimation(.interactiveSpring(response: 0.32, dampingFraction: 0.72)) {
-                currentExpression = .happySmile
-            }
-        default:
-            withAnimation(.interactiveSpring(response: 0.32, dampingFraction: 0.72)) {
-                currentExpression = .openLookCenter
-            }
-        }
-    }
-    
-    private func triggerWakeUpPerk() {
-        withAnimation(.spring(response: 0.25, dampingFraction: 0.50)) {
-            wakeUpJump = -4.0
-            currentExpression = .wakeUpShock
-        }
-        
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) {
-            withAnimation(.spring(response: 0.28, dampingFraction: 0.60)) {
-                self.wakeUpJump = 0
-            }
-        }
-        
-        // Follow up with a quick double-blink to clear sleep
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
-            self.triggerOrganicBlink()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
-                withAnimation(.interactiveSpring(response: 0.32, dampingFraction: 0.72)) {
-                    self.currentExpression = .happySmile
-                }
-            }
-        }
-    }
-    
-    private func triggerOrganicBlink() {
-        guard !isBlinking, currentExpression != .deepSleep, currentExpression != .pettedSquint else { return }
-        
-        withAnimation(.easeInOut(duration: 0.09)) {
-            isBlinking = true
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.10) {
-            withAnimation(.spring(response: 0.20, dampingFraction: 0.65)) {
-                self.isBlinking = false
-            }
-            
-            // 25% chance of realistic double-blink
-            if Double.random(in: 0...1) < 0.25 {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.11) {
-                    withAnimation(.easeInOut(duration: 0.08)) {
-                        self.isBlinking = true
-                    }
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.09) {
-                        withAnimation(.spring(response: 0.18, dampingFraction: 0.65)) {
-                            self.isBlinking = false
-                        }
-                    }
-                }
-            }
-        }
-    }
-    
-    private func setupInitialLivingMotion() {
-        withAnimation(.easeInOut(duration: 2.2).repeatForever(autoreverses: true)) {
-            breathingPulse = true
-        }
-        withAnimation(.easeInOut(duration: 0.85).repeatForever(autoreverses: true)) {
-            starTwinkle = true
-        }
-        handleStateTransition(to: state)
-    }
-    
-    private func handleStateTransition(to newState: MascotEyeState) {
-        switch newState {
-        case .petted:
-            withAnimation(.interactiveSpring(response: 0.25, dampingFraction: 0.55)) {
-                currentExpression = .pettedSquint
-            }
-        case .wakeUp:
-            triggerWakeUpPerk()
-        case .deepIdle:
-            withAnimation(.interactiveSpring(response: 0.35, dampingFraction: 0.70)) {
-                currentExpression = .deepSleep
-            }
-        case .videoRecording:
-            withAnimation(.interactiveSpring(response: 0.32, dampingFraction: 0.72)) {
-                currentExpression = .sentinelWebcam
-            }
-        case .timesUp:
-            withAnimation(.spring(response: 0.28, dampingFraction: 0.55)) {
-                currentExpression = .celebrationHop
-            }
-        case .music(let playing, let isNewTrack):
-            if isNewTrack {
-                withAnimation(.spring(response: 0.28, dampingFraction: 0.55)) {
-                    currentExpression = .celebrationHop
-                }
-            } else if playing {
-                withAnimation(.interactiveSpring(response: 0.30, dampingFraction: 0.70)) {
-                    currentExpression = .musicSmile
-                }
-            } else {
-                withAnimation(.interactiveSpring(response: 0.32, dampingFraction: 0.72)) {
-                    currentExpression = .musicPaused
-                }
-            }
-        default:
-            advanceLivingIdleLoop()
-        }
     }
 }
 

@@ -762,6 +762,9 @@ struct ContentView: View {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
                 checkFullscreen()
             }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                checkFullscreen()
+            }
         }
         .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didDeactivateApplicationNotification)) { _ in
             checkFullscreen()
@@ -808,9 +811,13 @@ struct ContentView: View {
             let frontPID = frontmostApp.processIdentifier
             let windowList = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
             
-            var otherAppIsFullscreen = false
+            let topInset = max(screen.safeAreaInsets.top, 0)
+            let maxTopInset = max(topInset, 44.0)
             
-            // Evaluate topmost normal window (layer 0)
+            var frontAppHasVisibleLayer0 = false
+            var frontAppHasFullscreen = false
+            var topmostLayer0Fullscreen = false
+            
             for window in windowList {
                 guard let ownerPID = window[kCGWindowOwnerPID as String] as? Int32,
                       let layer = window[kCGWindowLayer as String] as? Int,
@@ -821,19 +828,41 @@ struct ContentView: View {
                 // Skip Notchify's own windows
                 if ownerPID == ProcessInfo.processInfo.processIdentifier { continue }
                 // Only evaluate standard application windows (layer 0)
-                if layer != 0 { continue }
+                guard layer == 0 else { continue }
                 
-                // The first layer-0 window we encounter is the topmost window on screen
-                let coversScreen = (windowWidth >= screenFrame.width - 4 && windowHeight >= screenFrame.height - 4)
+                // Ignore tiny utility, cursor, tooltip or hidden zero-alpha windows
+                guard windowWidth > 200 && windowHeight > 200 else { continue }
+                if let alpha = window[kCGWindowAlpha as String] as? Double, alpha < 0.1 { continue }
+                
+                let windowX = bounds["X"] ?? 0
+                let windowY = bounds["Y"] ?? 0
+                let windowBottom = windowY + windowHeight
+                
+                // Check if this window covers the screen:
+                // - Horizontally: windowWidth >= screenFrame.width - 16 and windowX <= 16
+                // - Vertically: window reaches or exceeds screen height (or height minus notch safe area), and bottom touches screen bottom
+                let coversWidth = (windowWidth >= screenFrame.width - 16) && (windowX <= 16)
+                let coversHeight = (windowHeight >= screenFrame.height - 16 || windowHeight >= screenFrame.height - maxTopInset - 16) && (windowBottom >= screenFrame.height - 16)
+                
+                let isFullscreen = coversWidth && coversHeight
                 
                 if ownerPID == frontPID {
-                    // The frontmost app's window is evaluated
-                    otherAppIsFullscreen = coversScreen
-                } else {
-                    // Topmost window covers the screen
-                    otherAppIsFullscreen = coversScreen
+                    frontAppHasVisibleLayer0 = true
+                    if isFullscreen {
+                        frontAppHasFullscreen = true
+                        break // Found frontmost app's fullscreen window!
+                    }
+                } else if !topmostLayer0Fullscreen && isFullscreen {
+                    topmostLayer0Fullscreen = true
                 }
-                break // Only evaluate the topmost window; do not loop through background windows!
+            }
+            
+            // If the frontmost active app has standard visible windows, its state dictates whether fullscreen is active
+            let otherAppIsFullscreen: Bool
+            if frontAppHasVisibleLayer0 {
+                otherAppIsFullscreen = frontAppHasFullscreen
+            } else {
+                otherAppIsFullscreen = topmostLayer0Fullscreen
             }
             
             DispatchQueue.main.async {
