@@ -45,6 +45,7 @@
 		E10000000024020000000000 /* NotchShape.swift in Sources */ = {isa = PBXBuildFile; fileRef = E10000000024010000000000 /* NotchShape.swift */; };
 		E10000000025020000000000 /* SparklineView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E10000000025010000000000 /* SparklineView.swift */; };
 		E10000000026020000000000 /* WaveformView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E10000000026010000000000 /* WaveformView.swift */; };
+		E10000000027020000000000 /* NotchMascotView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E10000000027010000000000 /* NotchMascotView.swift */; };
 		D528863F3060BD0A001B8172 /* NotchifyApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = D528863E3060BD0A001B8172 /* NotchifyApp.swift */; };
 		D52886413060BD0A001B8172 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D52886403060BD0A001B8172 /* ContentView.swift */; };
 		D52886433060BD0D001B8172 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = D52886423060BD0D001B8172 /* Assets.xcassets */; };
@@ -110,6 +111,7 @@
 		E10000000024010000000000 /* NotchShape.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Views/Shapes/NotchShape.swift"; sourceTree = "<group>"; };
 		E10000000025010000000000 /* SparklineView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Views/Shapes/SparklineView.swift"; sourceTree = "<group>"; };
 		E10000000026010000000000 /* WaveformView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Views/Shapes/WaveformView.swift"; sourceTree = "<group>"; };
+		E10000000027010000000000 /* NotchMascotView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Views/Shapes/NotchMascotView.swift"; sourceTree = "<group>"; };
 		D528863B3060BD0A001B8172 /* Notchify.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Notchify.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		D528863E3060BD0A001B8172 /* NotchifyApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotchifyApp.swift; sourceTree = "<group>"; };
 		D52886403060BD0A001B8172 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
@@ -210,6 +212,7 @@
 				E10000000024010000000000 /* NotchShape.swift */,
 				E10000000025010000000000 /* SparklineView.swift */,
 				E10000000026010000000000 /* WaveformView.swift */,
+				E10000000027010000000000 /* NotchMascotView.swift */,
 				D52886403060BD0A001B8172 /* ContentView.swift */,
 				D52886423060BD0D001B8172 /* Assets.xcassets */,
 				D52886473060BD0D001B8172 /* Notchify.entitlements */,
@@ -413,6 +416,7 @@
 				E10000000024020000000000 /* NotchShape.swift in Sources */,
 				E10000000025020000000000 /* SparklineView.swift in Sources */,
 				E10000000026020000000000 /* WaveformView.swift in Sources */,
+				E10000000027020000000000 /* NotchMascotView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

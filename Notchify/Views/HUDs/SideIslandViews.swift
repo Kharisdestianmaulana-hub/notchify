@@ -36,6 +36,14 @@ struct DetachedPomodoroView: View {
                     Text(timeString(from: viewModel.pomodoroRemaining))
                         .font(.system(size: 11.5, weight: .semibold, design: .rounded).monospacedDigit())
                         .foregroundColor(viewModel.isPomodoroPaused ? .yellow : .white)
+                    
+                    let totalMinutes = Int(round(viewModel.pomodoroTotal / 60))
+                    let preset = PomodoroMascotPreset.from(totalMinutes: totalMinutes)
+                    NotchMascotEyesView(
+                        state: .pomodoro(preset: preset, isPaused: viewModel.isPomodoroPaused),
+                        eyeSize: CGSize(width: 3.5, height: 6.8),
+                        spacing: 2.6
+                    )
                 }
             }
             .buttonStyle(PlainButtonStyle())

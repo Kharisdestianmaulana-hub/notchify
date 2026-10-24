@@ -288,6 +288,8 @@ struct ContentView: View {
                                 }
                                 
                                 Spacer()
+                                
+                                NotchMascotCompanionView(viewModel: viewModel, size: 28)
                             }
                             .padding(.horizontal, 30)
                             .padding(.top, 12)

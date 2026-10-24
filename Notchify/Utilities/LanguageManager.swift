@@ -296,7 +296,8 @@ struct LanguageManager {
         "File Path Copied": "Path Direktori Disalin",
         "Phone Number Copied": "Nomor Telepon Disalin",
         "Currency Copied": "Nominal Uang Disalin",
-        "words": "kata"
+        "words": "kata",
+        "Notchify Companion": "Maskot Notchify"
     ]
     
     static func tr(_ key: String) -> String {

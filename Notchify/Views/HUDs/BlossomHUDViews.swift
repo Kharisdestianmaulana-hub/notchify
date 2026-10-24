@@ -89,13 +89,17 @@ struct CompactClockView: View {
     let timer = Timer.publish(every: 1.0, on: .main, in: .common).autoconnect()
     
     var body: some View {
-        Text(timeString)
-            .font(.system(size: 13, weight: .semibold, design: .rounded))
-            .foregroundColor(.white)
-            .onReceive(timer) { _ in updateTime() }
-            .onAppear { updateTime() }
-            .padding(.top, 4) // adjust to fit within 34px height, considering flares
-            .frame(height: 34)
+        HStack(spacing: 8) {
+            Text(timeString)
+                .font(.system(size: 13, weight: .semibold, design: .rounded))
+                .foregroundColor(.white)
+            
+            NotchMascotEyesView(state: .idle)
+        }
+        .onReceive(timer) { _ in updateTime() }
+        .onAppear { updateTime() }
+        .padding(.top, 4) // adjust to fit within 34px height, considering flares
+        .frame(height: 34)
     }
     
     private func updateTime() {
@@ -157,8 +161,10 @@ struct CompactMediaView: View {
             Spacer(minLength: 4)
             
             WaveformView(isPlaying: viewModel.isPlaying, color: viewModel.accentColor)
+            
+            NotchMascotEyesView(state: .music(isPlaying: viewModel.isPlaying))
         }
-        .padding(.horizontal, 28)
+        .padding(.horizontal, 22)
         .frame(height: 34)
     }
     
@@ -253,6 +259,13 @@ struct CompactPomodoroView: View {
                         Capsule()
                             .stroke((viewModel.isPomodoroPaused ? Color.yellow : Color.orange).opacity(0.3), lineWidth: 0.5)
                     )
+            )
+            
+            // 4. Mascot Eyes (4 preset animated states)
+            let totalMinutes = Int(round(viewModel.pomodoroTotal / 60))
+            let preset = PomodoroMascotPreset.from(totalMinutes: totalMinutes)
+            NotchMascotEyesView(
+                state: .pomodoro(preset: preset, isPaused: viewModel.isPomodoroPaused)
             )
         }
         .padding(.horizontal, 16)
