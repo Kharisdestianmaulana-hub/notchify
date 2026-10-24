@@ -476,6 +476,7 @@ struct ContentView: View {
                     HoverTrackingView { isHovering in
                         isMouseInsideNotch = isHovering
                         if isHovering {
+                            viewModel.notifyUserActivity()
                             if expandTrigger == "hover" {
                                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
                                     guard !viewModel.isHoveringWithFile else { return }

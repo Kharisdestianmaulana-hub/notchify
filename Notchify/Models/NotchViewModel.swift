@@ -42,6 +42,24 @@ class NotchViewModel: ObservableObject {
     @Published var showTimesUp: Bool = false
     private var pomodoroTimer: Timer?
     
+    // Mascot Companion Living States
+    @Published var mascotNewTrackCelebration: Bool = false
+    @Published var isDeepIdle: Bool = false
+    @Published var mascotWakeUpTrigger: Bool = false
+    @Published var cursorNormalizedOffset: CGSize = .zero
+    var lastUserActivityDate: Date = Date()
+    
+    func notifyUserActivity() {
+        if isDeepIdle {
+            isDeepIdle = false
+            mascotWakeUpTrigger = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                self.mascotWakeUpTrigger = false
+            }
+        }
+        lastUserActivityDate = Date()
+    }
+    
     // Calculator State
     @Published var calcInput: String = "0"
     @Published var calcPrevious: Double? = nil
@@ -351,6 +369,14 @@ class NotchViewModel: ObservableObject {
                 }
             }
         }
+        Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
+            guard let self = self else { return }
+            if Date().timeIntervalSince(self.lastUserActivityDate) > 45.0 && !self.isPlaying && !self.isPomodoroActive && !self.isExpanded {
+                if !self.isDeepIdle {
+                    self.isDeepIdle = true
+                }
+            }
+        }
     }
     
     private func updateLyricIndex() {
@@ -374,8 +400,16 @@ class NotchViewModel: ObservableObject {
             
             if let title = title {
                 if self.currentSong != title {
+                    let oldSong = self.currentSong
                     self.currentSong = title
                     self.currentArtist = artist ?? ""
+                    
+                    if !oldSong.isEmpty && oldSong != "No Media Playing" {
+                        self.mascotNewTrackCelebration = true
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.25) {
+                            self.mascotNewTrackCelebration = false
+                        }
+                    }
                     
                     // Fetch new lyrics only if enabled or user opened lyrics
                     self.lyrics = []

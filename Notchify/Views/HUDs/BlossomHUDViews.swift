@@ -152,7 +152,11 @@ struct CompactClockView: View {
             
             // 3. Notch Mascot Eyes (Living animated companion with battery awareness)
             let mascotState: MascotEyeState = {
-                if viewModel.isBatteryCharging {
+                if viewModel.mascotWakeUpTrigger {
+                    return .wakeUp
+                } else if viewModel.isDeepIdle {
+                    return .deepIdle
+                } else if viewModel.isBatteryCharging {
                     return .batteryCharging
                 } else if viewModel.batteryLevel <= 20 {
                     return .batteryLow
@@ -232,7 +236,14 @@ struct CompactMediaView: View {
             
             WaveformView(isPlaying: viewModel.isPlaying, color: viewModel.accentColor)
             
-            NotchMascotEyesView(state: .music(isPlaying: viewModel.isPlaying))
+            NotchMascotEyesView(
+                state: .music(
+                    isPlaying: viewModel.isPlaying,
+                    isNewTrack: viewModel.mascotNewTrackCelebration
+                ),
+                eyeSize: CGSize(width: 5.0, height: 9.2),
+                spacing: 4.0
+            )
         }
         .padding(.horizontal, 22)
         .frame(height: 34)

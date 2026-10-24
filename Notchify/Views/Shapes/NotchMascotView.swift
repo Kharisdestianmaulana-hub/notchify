@@ -21,9 +21,11 @@ enum PomodoroMascotPreset: Equatable {
 // MARK: - Mascot Eye State
 enum MascotEyeState: Equatable {
     case idle
+    case deepIdle
+    case wakeUp
     case batteryLow
     case batteryCharging
-    case music(isPlaying: Bool)
+    case music(isPlaying: Bool, isNewTrack: Bool = false)
     case pomodoro(preset: PomodoroMascotPreset, isPaused: Bool)
     case timesUp
     case videoRecording
@@ -140,12 +142,12 @@ struct MascotSquintEyeShape: Shape {
         let h = rect.height
         
         if isLeft {
-            // ">" wedge pointing right
+            // ">" soft wedge pointing right
             path.move(to: CGPoint(x: w * 0.15, y: h * 0.22))
             path.addLine(to: CGPoint(x: w * 0.88, y: h * 0.50))
             path.addLine(to: CGPoint(x: w * 0.15, y: h * 0.78))
         } else {
-            // "<" wedge pointing left
+            // "<" soft wedge pointing left
             path.move(to: CGPoint(x: w * 0.85, y: h * 0.22))
             path.addLine(to: CGPoint(x: w * 0.12, y: h * 0.50))
             path.addLine(to: CGPoint(x: w * 0.85, y: h * 0.78))
@@ -191,13 +193,29 @@ struct MascotSleepyEyeShape: Shape {
     }
 }
 
-// MARK: - Music Vibe Expressions (Lively cycling while listening to music)
-enum MusicVibeState: CaseIterable {
-    case happySmile     // ⌒ ⌒
-    case wideEyes       // ● ●
-    case leftWink       // ⌒ ●
-    case rightWink      // ● ⌒
-    case chillVibe      // ◡ ◡
+// MARK: - Internal Real-Time Living Expression
+enum LivingExpression: Equatable {
+    case openLookCenter          // (● ●)
+    case glanceClock             // (◄ ◄) Looking at Clock
+    case glanceBattery           // (► ►) Looking at Battery
+    case glanceDown              // (▼ ▼) Looking Down (DropZone)
+    case happySmile              // (⌒ ⌒) Friendly Smile
+    case zenRelax                // (◡ ◡) Zen Relax
+    case winkLeft                // (⌒ ●)
+    case winkRight               // (● ⌒)
+    case sleepy                  // (- -)
+    case deepSleep               // (◡ ◡) Sleeping
+    case wakeUpShock             // (⊙ ⊙) Surprise Wakeup
+    case celebrationHop          // (✧ ✧) Track change / Win
+    case musicSmile              // (⌒ ⌒)
+    case musicWide               // (● ●)
+    case musicWinkLeft           // (⌒ ●)
+    case musicWinkRight          // (● ⌒)
+    case musicZen                // (◡ ◡)
+    case musicPaused             // (● ⌒) Curious tilt
+    case pettedSquint            // (> <)
+    case sentinelWebcam          // (⊙ ⊙) Watching camera
+    case pomodoroFocus           // (•̀ ⤙ •́)
 }
 
 // MARK: - Notch Mascot Eyes View (Compact Pill & Embedded)
@@ -205,34 +223,40 @@ struct NotchMascotEyesView: View {
     let state: MascotEyeState
     var eyeSize: CGSize = CGSize(width: 5.2, height: 9.5)
     var spacing: CGFloat = 4.2
+    var cursorOffset: CGSize = .zero // Normalized cursor vector (-1...1, -1...1)
     
+    // Living expression state
+    @State private var currentExpression: LivingExpression = .openLookCenter
     @State private var isBlinking: Bool = false
-    @State private var musicBounce: Bool = false
-    @State private var musicVibeState: MusicVibeState = .happySmile
-    @State private var breakGlance: Bool = false
-    @State private var zenBreath: Bool = false
-    @State private var celebratePulse: Bool = false
-    @State private var glanceOffset: CGFloat = 0
-    @State private var pupilLookOffset: CGSize = .zero
     @State private var breathingPulse: Bool = false
     @State private var starTwinkle: Bool = false
-    @State private var notesReadingOffset: CGFloat = 0
+    @State private var musicBeatBounce: Bool = false
+    @State private var musicVibeIndex: Int = 0
+    @State private var idleCycleIndex: Int = 0
+    @State private var notesScanOffset: CGFloat = 0
+    @State private var lastInteractionCheck: Date = Date()
+    @State private var wakeUpJump: CGFloat = 0
     
-    // Natural randomized timer intervals
-    private let blinkTimer = Timer.publish(every: 2.9, on: .main, in: .common).autoconnect()
-    private let glanceTimer = Timer.publish(every: 4.4, on: .main, in: .common).autoconnect()
-    private let breakTimer = Timer.publish(every: 2.2, on: .main, in: .common).autoconnect()
-    private let musicVibeTimer = Timer.publish(every: 2.7, on: .main, in: .common).autoconnect()
-    private let notesScanTimer = Timer.publish(every: 1.3, on: .main, in: .common).autoconnect()
+    // Real-Time Timers (Agile & Apple-like)
+    // Idle transitions every 2.8s (range 2.5 - 3.5s)
+    private let idleTimer = Timer.publish(every: 2.85, on: .main, in: .common).autoconnect()
+    // Music groove runs lively at 1.05s per beat
+    private let musicTimer = Timer.publish(every: 1.08, on: .main, in: .common).autoconnect()
+    // Organic blinking timer
+    private let blinkTimer = Timer.publish(every: 2.8, on: .main, in: .common).autoconnect()
+    // Notes reading scanner
+    private let notesTimer = Timer.publish(every: 1.15, on: .main, in: .common).autoconnect()
     
     init(
         state: MascotEyeState,
         eyeSize: CGSize = CGSize(width: 5.2, height: 9.5),
-        spacing: CGFloat = 4.2
+        spacing: CGFloat = 4.2,
+        cursorOffset: CGSize = .zero
     ) {
         self.state = state
         self.eyeSize = eyeSize
         self.spacing = spacing
+        self.cursorOffset = cursorOffset
     }
     
     // Warm luminous ivory colors matching LogoNotchify
@@ -246,48 +270,40 @@ struct NotchMascotEyesView: View {
             singleEyeView(isLeft: true)
             singleEyeView(isLeft: false)
         }
-        .offset(x: glanceOffset + notesReadingOffset)
-        .offset(y: eyeYOffset)
+        .offset(x: notesScanOffset)
+        .offset(y: currentEyeYOffset + wakeUpJump)
         .scaleEffect(
-            celebratePulse
-                ? 1.20
-                : (breathingPulse ? 1.04 : 0.97)
+            currentExpression == .wakeUpShock
+                ? 1.18
+                : (currentExpression == .celebrationHop
+                   ? 1.22
+                   : (breathingPulse ? 1.03 : 0.97))
         )
-        .rotationEffect(.degrees(overallRotation))
+        .rotationEffect(.degrees(currentOverallRotation))
+        .animation(.interactiveSpring(response: 0.32, dampingFraction: 0.72, blendDuration: 0.08), value: currentExpression)
+        .onReceive(idleTimer) { _ in
+            advanceLivingIdleLoop()
+        }
+        .onReceive(musicTimer) { _ in
+            advanceLivingMusicLoop()
+        }
         .onReceive(blinkTimer) { _ in
-            triggerNaturalBlink()
+            triggerOrganicBlink()
         }
-        .onReceive(glanceTimer) { _ in
-            triggerCuriousGlance()
-        }
-        .onReceive(breakTimer) { _ in
-            if case .pomodoro(.shortBreak, _) = state {
-                withAnimation(.easeInOut(duration: 0.35)) {
-                    breakGlance.toggle()
-                }
-            }
-        }
-        .onReceive(musicVibeTimer) { _ in
-            if isMusicActive {
-                withAnimation(.spring(response: 0.38, dampingFraction: 0.68)) {
-                    cycleMusicVibe()
-                }
-            }
-        }
-        .onReceive(notesScanTimer) { _ in
+        .onReceive(notesTimer) { _ in
             if case .tabVibe(let tab) = state, tab == .notes {
-                withAnimation(.easeInOut(duration: 0.45)) {
-                    notesReadingOffset = (notesReadingOffset == -1.2) ? 1.2 : -1.2
+                withAnimation(.easeInOut(duration: 0.4)) {
+                    notesScanOffset = (notesScanOffset == -1.4) ? 1.4 : -1.4
                 }
             } else {
-                notesReadingOffset = 0
+                notesScanOffset = 0
             }
         }
         .onAppear {
-            setupInitialAnimations()
+            setupInitialLivingMotion()
         }
         .onChange(of: state) { newState in
-            handleStateChange(to: newState)
+            handleStateTransition(to: newState)
         }
     }
     
@@ -295,59 +311,74 @@ struct NotchMascotEyesView: View {
     @ViewBuilder
     private func singleEyeView(isLeft: Bool) -> some View {
         Group {
-            switch state {
-            case .petted:
-                // Squinting / cute eye "> <"
+            switch currentExpression {
+            case .pettedSquint:
                 squintEyeView(isLeft: isLeft)
                 
-            case .timesUp:
-                // Celebration Star eyes ★ ★
+            case .celebrationHop:
                 starEyeView(isCelebration: true)
                 
-            case .batteryCharging:
-                // Energized sparkle star eyes ✧ ✧
-                starEyeView(isCelebration: false)
+            case .wakeUpShock:
+                // Big wide surprised eyes (⊙ ⊙)
+                openCapsuleEyeView(isLeft: isLeft, lookOffset: .zero, forceWide: true)
                 
-            case .batteryLow:
-                // Sleepy / tired eyelids - -
+            case .sleepy:
                 sleepyEyeView()
                 
-            case .videoRecording:
-                // Inquisitive sentinel eye looking up towards the webcam
-                openCapsuleEyeView(isLeft: isLeft, lookOffset: CGSize(width: 0, height: -0.7))
+            case .deepSleep:
+                chillArcEyeView(zenSleep: true)
                 
-            case .music(let isPlaying):
-                if isPlaying {
-                    musicEyeView(isLeft: isLeft)
-                } else {
-                    // Paused: curious head-tilt, one eye open, one smiling
-                    if isLeft {
-                        openCapsuleEyeView(isLeft: isLeft, lookOffset: CGSize(width: -0.6, height: 0))
-                    } else {
-                        smilingArcEyeView()
-                    }
-                }
+            case .zenRelax, .musicZen:
+                chillArcEyeView(zenSleep: false)
                 
-            case .pomodoro(let preset, _):
-                pomodoroEyeView(preset: preset, isLeft: isLeft)
+            case .happySmile, .musicSmile:
+                smilingArcEyeView()
                 
-            case .tabVibe(let tab):
-                tabSpecificEyeView(tab: tab, isLeft: isLeft)
-                
-            case .wink:
+            case .winkLeft:
                 if isLeft {
                     smilingArcEyeView()
                 } else {
-                    openCapsuleEyeView(isLeft: isLeft)
+                    openCapsuleEyeView(isLeft: isLeft, lookOffset: computedPupilOffset)
                 }
                 
-            case .idle:
-                openCapsuleEyeView(isLeft: isLeft, lookOffset: pupilLookOffset)
+            case .winkRight:
+                if isLeft {
+                    openCapsuleEyeView(isLeft: isLeft, lookOffset: computedPupilOffset)
+                } else {
+                    smilingArcEyeView()
+                }
+                
+            case .glanceClock:
+                openCapsuleEyeView(isLeft: isLeft, lookOffset: CGSize(width: -0.9, height: 0))
+                
+            case .glanceBattery:
+                openCapsuleEyeView(isLeft: isLeft, lookOffset: CGSize(width: 0.9, height: 0))
+                
+            case .glanceDown:
+                openCapsuleEyeView(isLeft: isLeft, lookOffset: CGSize(width: 0, height: 0.85))
+                
+            case .musicWinkLeft:
+                if isLeft { smilingArcEyeView() } else { openCapsuleEyeView(isLeft: isLeft, lookOffset: computedPupilOffset) }
+                
+            case .musicWinkRight:
+                if isLeft { openCapsuleEyeView(isLeft: isLeft, lookOffset: computedPupilOffset) } else { smilingArcEyeView() }
+                
+            case .musicPaused:
+                if isLeft { openCapsuleEyeView(isLeft: isLeft, lookOffset: CGSize(width: -0.7, height: 0)) } else { smilingArcEyeView() }
+                
+            case .sentinelWebcam:
+                openCapsuleEyeView(isLeft: isLeft, lookOffset: CGSize(width: 0, height: -0.75))
+                
+            case .pomodoroFocus:
+                openCapsuleEyeView(isLeft: isLeft, lookOffset: .zero, isFocusedGaze: true)
+                
+            case .openLookCenter, .musicWide:
+                openCapsuleEyeView(isLeft: isLeft, lookOffset: computedPupilOffset)
             }
         }
         .shadow(
             color: activeGlowColor.opacity(breathingPulse ? 0.85 : 0.45),
-            radius: (state == .batteryCharging || state == .timesUp) ? 5 : 3,
+            radius: (currentExpression == .celebrationHop || state == .batteryCharging) ? 5 : 3,
             x: 0,
             y: 0
         )
@@ -360,88 +391,27 @@ struct NotchMascotEyesView: View {
         .rotationEffect(.degrees(individualEyeRotation(isLeft: isLeft)))
     }
     
-    // MARK: - Glow Color Resolution
-    private var activeGlowColor: Color {
-        if state == .batteryCharging {
-            return chargingGreenColor
+    // MARK: - Dynamic Pupil Offset Calculation
+    private var computedPupilOffset: CGSize {
+        // If cursor tracking is provided (mode extend)
+        if cursorOffset != .zero {
+            return CGSize(
+                width: max(-1.0, min(1.0, cursorOffset.width)),
+                height: max(-0.9, min(0.9, cursorOffset.height))
+            )
         }
-        if state == .timesUp {
-            return Color.yellow
-        }
-        return eyeGlowColor
-    }
-    
-    // MARK: - Dynamic Music Eye Rendering
-    @ViewBuilder
-    private func musicEyeView(isLeft: Bool) -> some View {
-        switch musicVibeState {
-        case .happySmile:
-            smilingArcEyeView()
-        case .wideEyes:
-            openCapsuleEyeView(isLeft: isLeft, lookOffset: pupilLookOffset)
-        case .leftWink:
-            if isLeft {
-                smilingArcEyeView()
-            } else {
-                openCapsuleEyeView(isLeft: isLeft)
-            }
-        case .rightWink:
-            if isLeft {
-                openCapsuleEyeView(isLeft: isLeft)
-            } else {
-                smilingArcEyeView()
-            }
-        case .chillVibe:
-            chillArcEyeView()
-        }
-    }
-    
-    // MARK: - Tab-Specific Expressions
-    @ViewBuilder
-    private func tabSpecificEyeView(tab: NotchTab, isLeft: Bool) -> some View {
-        switch tab {
-        case .mirror:
-            // Selfie Smile (Happy arc eyes ready for photos)
-            smilingArcEyeView()
-            
-        case .dropzone:
-            // Looking down eagerly at the drop target
-            openCapsuleEyeView(isLeft: isLeft, lookOffset: CGSize(width: 0, height: 0.85))
-            
-        case .notes:
-            // Scanning eyes back and forth reading
-            openCapsuleEyeView(isLeft: isLeft, lookOffset: CGSize(width: notesReadingOffset * 0.7, height: 0.1))
-            
-        case .weather:
-            // Cheerful open eyes
-            openCapsuleEyeView(isLeft: isLeft, lookOffset: pupilLookOffset)
-            
-        case .media:
-            smilingArcEyeView()
-            
-        case .clipboard, .calculator, .agenda, .system, .network:
-            openCapsuleEyeView(isLeft: isLeft, lookOffset: pupilLookOffset)
-            
-        case .pomodoro:
-            openCapsuleEyeView(isLeft: isLeft, lookOffset: pupilLookOffset)
-        }
-    }
-    
-    // MARK: - Pomodoro Expressions
-    @ViewBuilder
-    private func pomodoroEyeView(preset: PomodoroMascotPreset, isLeft: Bool) -> some View {
-        switch preset {
-        case .focus:
-            // Sharp focused concentration gaze
-            openCapsuleEyeView(isLeft: isLeft, lookOffset: .zero)
-        case .rest:
-            // Zen sleep crescent
-            chillArcEyeView()
-        case .shortBreak:
-            // Cheerful smile break
-            smilingArcEyeView()
-        case .custom:
-            openCapsuleEyeView(isLeft: isLeft, lookOffset: pupilLookOffset)
+        
+        switch currentExpression {
+        case .glanceClock:
+            return CGSize(width: -0.9, height: 0)
+        case .glanceBattery:
+            return CGSize(width: 0.9, height: 0)
+        case .glanceDown:
+            return CGSize(width: 0, height: 0.8)
+        case .sentinelWebcam:
+            return CGSize(width: 0, height: -0.75)
+        default:
+            return .zero
         }
     }
     
@@ -461,18 +431,18 @@ struct NotchMascotEyesView: View {
     }
     
     @ViewBuilder
-    private func chillArcEyeView() -> some View {
+    private func chillArcEyeView(zenSleep: Bool) -> some View {
         MascotEyeArcShape(flipped: true)
             .stroke(
                 LinearGradient(
-                    colors: [eyeWarmFill.opacity(zenBreath ? 1.0 : 0.75), eyeGlowColor.opacity(0.8)],
+                    colors: [eyeWarmFill.opacity(zenSleep ? 0.85 : 1.0), eyeGlowColor.opacity(0.8)],
                     startPoint: .top,
                     endPoint: .bottom
                 ),
                 style: StrokeStyle(lineWidth: eyeSize.width * 0.42, lineCap: .round)
             )
             .frame(width: eyeSize.width * 1.2, height: eyeSize.height * 0.8)
-            .scaleEffect(zenBreath ? 1.06 : 0.96)
+            .scaleEffect(zenSleep ? (breathingPulse ? 1.08 : 0.94) : 1.0)
     }
     
     @ViewBuilder
@@ -512,7 +482,7 @@ struct NotchMascotEyesView: View {
         MascotSleepyEyeShape()
             .stroke(
                 LinearGradient(
-                    colors: [eyeWarmFill.opacity(0.8), eyeWarmFill.opacity(0.5)],
+                    colors: [eyeWarmFill.opacity(0.85), eyeWarmFill.opacity(0.5)],
                     startPoint: .leading,
                     endPoint: .trailing
                 ),
@@ -522,9 +492,14 @@ struct NotchMascotEyesView: View {
     }
     
     @ViewBuilder
-    private func openCapsuleEyeView(isLeft: Bool, lookOffset: CGSize = .zero) -> some View {
+    private func openCapsuleEyeView(
+        isLeft: Bool,
+        lookOffset: CGSize,
+        forceWide: Bool = false,
+        isFocusedGaze: Bool = false
+    ) -> some View {
         ZStack {
-            // Base Capsule with dynamic light gradient center
+            // Base Capsule with dynamic light gradient center that shifts focal center
             Capsule()
                 .fill(
                     RadialGradient(
@@ -548,123 +523,266 @@ struct NotchMascotEyesView: View {
                 )
         }
         .frame(
-            width: eyeSize.width * eyeScaleX(isLeft: isLeft),
-            height: max(1.2, eyeSize.height * (isBlinking ? 0.10 : eyeScaleY(isLeft: isLeft)))
+            width: eyeSize.width * (forceWide ? 1.22 : (isFocusedGaze ? 1.15 : 1.0)),
+            height: max(1.2, eyeSize.height * (isBlinking ? 0.08 : (isFocusedGaze ? 0.76 : (forceWide ? 1.18 : 1.0))))
         )
     }
     
-    // MARK: - State Computed Properties
-    private var isMusicActive: Bool {
-        if case .music(let isPlaying) = state {
-            return isPlaying
-        }
-        return false
-    }
-    
-    private var isRestActive: Bool {
-        if case .pomodoro(.rest, _) = state {
-            return true
-        }
-        return false
-    }
-    
-    private var eyeYOffset: CGFloat {
+    // MARK: - Dynamic Motion & Rotation Offsets
+    private var currentEyeYOffset: CGFloat {
         if isMusicActive {
-            return musicBounce ? -2.2 : 0.6
+            return musicBeatBounce ? -2.6 : 0.8
         }
-        if state == .timesUp {
-            return celebratePulse ? -3.0 : 0
+        if currentExpression == .celebrationHop {
+            return -4.5
+        }
+        if currentExpression == .wakeUpShock {
+            return -3.0
         }
         return 0
     }
     
-    private var overallRotation: Double {
-        switch state {
-        case .music(let playing):
-            return playing ? (musicBounce ? -3.5 : 3.5) : -2.0
-        case .pomodoro(.focus, let isPaused):
-            return isPaused ? 6.0 : 0
-        case .pomodoro(.shortBreak, _):
-            return breakGlance ? 3.0 : -3.0
-        case .pomodoro(.custom, let isPaused):
-            return isPaused ? 4.0 : 0
-        case .wink:
-            return 3.0
-        case .tabVibe(let tab):
-            return (tab == .mirror) ? 2.5 : 0
+    private var currentOverallRotation: Double {
+        if isMusicActive {
+            return musicBeatBounce ? -3.5 : 3.5
+        }
+        switch currentExpression {
+        case .musicPaused:
+            return 4.0
+        case .winkLeft:
+            return 2.5
+        case .winkRight:
+            return -2.5
+        case .pomodoroFocus:
+            return 0
+        case .glanceClock:
+            return -1.5
+        case .glanceBattery:
+            return 1.5
         default:
             return 0
         }
     }
     
-    private func eyeScaleX(isLeft: Bool) -> CGFloat {
-        switch state {
-        case .pomodoro(.focus, _):
-            return 1.15 // Determined wide gaze
-        case .timesUp:
-            return 1.25
-        case .videoRecording:
-            return 1.10
-        default:
-            return 1.0
-        }
-    }
-    
-    private func eyeScaleY(isLeft: Bool) -> CGFloat {
-        switch state {
-        case .pomodoro(.focus, _):
-            return 0.78 // Narrowed concentration focus
-        case .timesUp:
-            return 1.20
-        case .batteryLow:
-            return 0.65 // Heavy eyelids
-        default:
-            return 1.0
-        }
-    }
-    
     private func individualEyeRotation(isLeft: Bool) -> Double {
-        switch state {
-        case .pomodoro(.focus, _):
+        if currentExpression == .pomodoroFocus {
             return isLeft ? 5.5 : -5.5
-        case .pomodoro(.shortBreak, _):
-            return breakGlance ? (isLeft ? 2 : 4) : (isLeft ? -4 : -2)
-        default:
-            return isLeft ? -3.0 : 3.0
         }
+        return isLeft ? -3.0 : 3.0
     }
     
-    // MARK: - Natural Animations & Micro-Life Engine
-    private func cycleMusicVibe() {
-        let sequence: [MusicVibeState] = [.happySmile, .wideEyes, .leftWink, .happySmile, .rightWink, .wideEyes, .chillVibe]
-        if let currentIdx = sequence.firstIndex(of: musicVibeState) {
-            let nextIdx = (currentIdx + 1) % sequence.count
-            musicVibeState = sequence[nextIdx]
-        } else {
-            musicVibeState = .happySmile
+    private var activeGlowColor: Color {
+        if state == .batteryCharging {
+            return chargingGreenColor
         }
+        if state == .timesUp || currentExpression == .celebrationHop {
+            return Color.yellow
+        }
+        return eyeGlowColor
     }
     
-    private func triggerNaturalBlink() {
-        guard !isBlinking && !isRestActive && state != .timesUp && state != .petted else { return }
-        if isMusicActive && musicVibeState != .wideEyes { return }
+    private var isMusicActive: Bool {
+        if case .music(let isPlaying, _) = state {
+            return isPlaying
+        }
+        return false
+    }
+    
+    // MARK: - Real-Time Choreography Engines
+    private func advanceLivingIdleLoop() {
+        guard !isMusicActive, state != .petted, state != .videoRecording else { return }
         
-        withAnimation(.easeInOut(duration: 0.10)) {
+        if state == .wakeUp {
+            triggerWakeUpPerk()
+            return
+        }
+        
+        if state == .deepIdle {
+            withAnimation(.interactiveSpring(response: 0.35, dampingFraction: 0.70)) {
+                currentExpression = .deepSleep
+            }
+            return
+        }
+        
+        if state == .batteryLow {
+            withAnimation(.interactiveSpring(response: 0.35, dampingFraction: 0.70)) {
+                currentExpression = .sleepy
+            }
+            return
+        }
+        
+        if state == .batteryCharging {
+            withAnimation(.interactiveSpring(response: 0.32, dampingFraction: 0.65)) {
+                currentExpression = .celebrationHop
+            }
+            return
+        }
+        
+        if state == .timesUp {
+            withAnimation(.interactiveSpring(response: 0.28, dampingFraction: 0.55)) {
+                currentExpression = .celebrationHop
+            }
+            return
+        }
+        
+        if case .tabVibe(let tab) = state {
+            handleTabVibe(tab: tab)
+            return
+        }
+        
+        if case .pomodoro(let preset, let isPaused) = state {
+            if isPaused {
+                withAnimation(.interactiveSpring(response: 0.32, dampingFraction: 0.70)) {
+                    currentExpression = .openLookCenter
+                }
+            } else {
+                switch preset {
+                case .focus:
+                    currentExpression = .pomodoroFocus
+                case .shortBreak:
+                    currentExpression = (idleCycleIndex % 2 == 0) ? .happySmile : .openLookCenter
+                case .rest:
+                    currentExpression = .deepSleep
+                case .custom:
+                    currentExpression = .openLookCenter
+                }
+            }
+            return
+        }
+        
+        // Idle Sequence Loop (2.5 - 3.5s tempo, natural Apple flow)
+        let hour = Calendar.current.component(.hour, from: Date())
+        let isLateNight = (hour >= 22 || hour < 6)
+        
+        // Late night favors soothing zen and calm eyes
+        let idlePool: [LivingExpression] = isLateNight
+            ? [.openLookCenter, .zenRelax, .glanceClock, .zenRelax, .happySmile, .deepSleep]
+            : [
+                .openLookCenter,
+                .glanceClock,
+                .happySmile,
+                .openLookCenter,
+                .glanceBattery,
+                .winkLeft,
+                .zenRelax,
+                .openLookCenter,
+                .winkRight,
+                .happySmile
+            ]
+        
+        idleCycleIndex = (idleCycleIndex + 1) % idlePool.count
+        let nextExp = idlePool[idleCycleIndex]
+        
+        withAnimation(.interactiveSpring(response: 0.32, dampingFraction: 0.72, blendDuration: 0.08)) {
+            currentExpression = nextExp
+        }
+    }
+    
+    private func advanceLivingMusicLoop() {
+        guard isMusicActive else { return }
+        
+        // Check new track celebration override
+        if case .music(_, let isNewTrack) = state, isNewTrack {
+            withAnimation(.spring(response: 0.28, dampingFraction: 0.55)) {
+                currentExpression = .celebrationHop
+            }
+            return
+        }
+        
+        // Alternate bounce
+        withAnimation(.interactiveSpring(response: 0.32, dampingFraction: 0.65)) {
+            musicBeatBounce.toggle()
+        }
+        
+        // Cycle lively music vibe expressions (1.0 - 1.2s per beat)
+        let musicPool: [LivingExpression] = [
+            .musicSmile,
+            .musicWide,
+            .musicWinkLeft,
+            .musicSmile,
+            .musicWinkRight,
+            .musicZen
+        ]
+        
+        musicVibeIndex = (musicVibeIndex + 1) % musicPool.count
+        let nextVibe = musicPool[musicVibeIndex]
+        
+        withAnimation(.interactiveSpring(response: 0.30, dampingFraction: 0.70)) {
+            currentExpression = nextVibe
+        }
+    }
+    
+    private func handleTabVibe(tab: NotchTab) {
+        switch tab {
+        case .mirror:
+            withAnimation(.interactiveSpring(response: 0.32, dampingFraction: 0.72)) {
+                currentExpression = .happySmile // Selfie ready!
+            }
+        case .dropzone:
+            withAnimation(.interactiveSpring(response: 0.32, dampingFraction: 0.72)) {
+                currentExpression = .glanceDown // Anticipating files
+            }
+        case .notes:
+            withAnimation(.interactiveSpring(response: 0.32, dampingFraction: 0.72)) {
+                currentExpression = .openLookCenter
+            }
+        case .weather:
+            withAnimation(.interactiveSpring(response: 0.32, dampingFraction: 0.72)) {
+                currentExpression = (idleCycleIndex % 2 == 0) ? .openLookCenter : .happySmile
+            }
+        case .media:
+            withAnimation(.interactiveSpring(response: 0.32, dampingFraction: 0.72)) {
+                currentExpression = .happySmile
+            }
+        default:
+            withAnimation(.interactiveSpring(response: 0.32, dampingFraction: 0.72)) {
+                currentExpression = .openLookCenter
+            }
+        }
+    }
+    
+    private func triggerWakeUpPerk() {
+        withAnimation(.spring(response: 0.25, dampingFraction: 0.50)) {
+            wakeUpJump = -4.0
+            currentExpression = .wakeUpShock
+        }
+        
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) {
+            withAnimation(.spring(response: 0.28, dampingFraction: 0.60)) {
+                self.wakeUpJump = 0
+            }
+        }
+        
+        // Follow up with a quick double-blink to clear sleep
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+            self.triggerOrganicBlink()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                withAnimation(.interactiveSpring(response: 0.32, dampingFraction: 0.72)) {
+                    self.currentExpression = .happySmile
+                }
+            }
+        }
+    }
+    
+    private func triggerOrganicBlink() {
+        guard !isBlinking, currentExpression != .deepSleep, currentExpression != .pettedSquint else { return }
+        
+        withAnimation(.easeInOut(duration: 0.09)) {
             isBlinking = true
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.11) {
-            withAnimation(.spring(response: 0.22, dampingFraction: 0.65)) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.10) {
+            withAnimation(.spring(response: 0.20, dampingFraction: 0.65)) {
                 self.isBlinking = false
             }
             
             // 25% chance of realistic double-blink
             if Double.random(in: 0...1) < 0.25 {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.11) {
                     withAnimation(.easeInOut(duration: 0.08)) {
                         self.isBlinking = true
                     }
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.09) {
-                        withAnimation(.spring(response: 0.20, dampingFraction: 0.65)) {
+                        withAnimation(.spring(response: 0.18, dampingFraction: 0.65)) {
                             self.isBlinking = false
                         }
                     }
@@ -673,67 +791,52 @@ struct NotchMascotEyesView: View {
         }
     }
     
-    private func triggerCuriousGlance() {
-        guard state == .idle || (isMusicActive && musicVibeState == .wideEyes) else { return }
-        
-        // Randomly pick: glance left (towards clock), glance right (towards battery), or center
-        let choices: [(offset: CGFloat, pupil: CGSize)] = [
-            (-1.8, CGSize(width: -0.85, height: 0)), // Look left
-            (1.8, CGSize(width: 0.85, height: 0)),   // Look right
-            (0, CGSize(width: 0, height: 0.4)),      // Look slightly down
-            (0, .zero)                               // Look straight ahead
-        ]
-        
-        guard let choice = choices.randomElement() else { return }
-        
-        withAnimation(.easeInOut(duration: 0.35)) {
-            glanceOffset = choice.offset
-            pupilLookOffset = choice.pupil
-        }
-        
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.25) {
-            withAnimation(.easeInOut(duration: 0.35)) {
-                self.glanceOffset = 0
-                self.pupilLookOffset = .zero
-            }
-        }
-    }
-    
-    private func setupInitialAnimations() {
-        // Subtle constant breathing
+    private func setupInitialLivingMotion() {
         withAnimation(.easeInOut(duration: 2.2).repeatForever(autoreverses: true)) {
             breathingPulse = true
         }
-        // Twinkle for stars
         withAnimation(.easeInOut(duration: 0.85).repeatForever(autoreverses: true)) {
             starTwinkle = true
         }
-        handleStateChange(to: state)
+        handleStateTransition(to: state)
     }
     
-    private func handleStateChange(to newState: MascotEyeState) {
+    private func handleStateTransition(to newState: MascotEyeState) {
         switch newState {
-        case .music(let isPlaying):
-            if isPlaying {
-                withAnimation(.easeInOut(duration: 0.38).repeatForever(autoreverses: true)) {
-                    musicBounce = true
-                }
-            } else {
-                musicBounce = false
-                musicVibeState = .happySmile
+        case .petted:
+            withAnimation(.interactiveSpring(response: 0.25, dampingFraction: 0.55)) {
+                currentExpression = .pettedSquint
             }
-        case .pomodoro(.rest, _):
-            withAnimation(.easeInOut(duration: 1.8).repeatForever(autoreverses: true)) {
-                zenBreath = true
+        case .wakeUp:
+            triggerWakeUpPerk()
+        case .deepIdle:
+            withAnimation(.interactiveSpring(response: 0.35, dampingFraction: 0.70)) {
+                currentExpression = .deepSleep
+            }
+        case .videoRecording:
+            withAnimation(.interactiveSpring(response: 0.32, dampingFraction: 0.72)) {
+                currentExpression = .sentinelWebcam
             }
         case .timesUp:
-            withAnimation(.easeInOut(duration: 0.26).repeatForever(autoreverses: true)) {
-                celebratePulse = true
+            withAnimation(.spring(response: 0.28, dampingFraction: 0.55)) {
+                currentExpression = .celebrationHop
+            }
+        case .music(let playing, let isNewTrack):
+            if isNewTrack {
+                withAnimation(.spring(response: 0.28, dampingFraction: 0.55)) {
+                    currentExpression = .celebrationHop
+                }
+            } else if playing {
+                withAnimation(.interactiveSpring(response: 0.30, dampingFraction: 0.70)) {
+                    currentExpression = .musicSmile
+                }
+            } else {
+                withAnimation(.interactiveSpring(response: 0.32, dampingFraction: 0.72)) {
+                    currentExpression = .musicPaused
+                }
             }
         default:
-            musicBounce = false
-            zenBreath = false
-            celebratePulse = false
+            advanceLivingIdleLoop()
         }
     }
 }
@@ -840,6 +943,7 @@ struct NotchMascotCompanionView: View {
     @State private var isSquished: Bool = false
     @State private var isPetted: Bool = false
     @State private var breathing: Bool = false
+    @State private var cursorLookVector: CGSize = .zero
     
     init(viewModel: NotchViewModel, size: CGFloat = 30) {
         self.viewModel = viewModel
@@ -857,8 +961,14 @@ struct NotchMascotCompanionView: View {
         if CameraMirrorManager.shared.isRecordingVideo {
             return .videoRecording
         }
+        if viewModel.mascotWakeUpTrigger {
+            return .wakeUp
+        }
+        if viewModel.isDeepIdle {
+            return .deepIdle
+        }
         if viewModel.isPlaying {
-            return .music(isPlaying: true)
+            return .music(isPlaying: true, isNewTrack: viewModel.mascotNewTrackCelebration)
         }
         if viewModel.isPomodoroActive {
             let totalMinutes = Int(round(viewModel.pomodoroTotal / 60))
@@ -882,14 +992,15 @@ struct NotchMascotCompanionView: View {
                 // 2D Pebble Body
                 NotchPebbleBodyView(size: size, isHovered: isHovered)
                 
-                // Embedded Mascot Eyes
+                // Embedded Mascot Eyes with cursor tracking
                 NotchMascotEyesView(
                     state: currentMascotState,
                     eyeSize: CGSize(
                         width: size * (isHovered ? 0.18 : 0.16),
                         height: size * (isHovered ? 0.30 : 0.28)
                     ),
-                    spacing: size * 0.12
+                    spacing: size * 0.12,
+                    cursorOffset: cursorLookVector
                 )
                 .offset(y: -size * 0.02)
             }
@@ -901,25 +1012,55 @@ struct NotchMascotCompanionView: View {
                        : (breathing ? CGSize(width: 1.02, height: 1.02) : CGSize(width: 0.98, height: 0.98)))
             )
             .rotationEffect(.degrees(viewModel.isPlaying ? (breathing ? -2.5 : 2.5) : (isHovered ? -1.5 : 0)))
-            .animation(.spring(response: 0.32, dampingFraction: 0.55), value: isSquished)
-            .animation(.easeInOut(duration: 0.18), value: isHovered)
+            .animation(.interactiveSpring(response: 0.32, dampingFraction: 0.60), value: isSquished)
+            .animation(.interactiveSpring(response: 0.30, dampingFraction: 0.70), value: isHovered)
             .animation(.easeInOut(duration: 0.45).repeatForever(autoreverses: true), value: viewModel.isPlaying)
         }
         .buttonStyle(PlainButtonStyle())
         .help(LanguageManager.tr("Notchify Companion"))
         .onHover { h in
+            viewModel.notifyUserActivity()
             withAnimation(.spring(response: 0.28, dampingFraction: 0.65)) {
                 isHovered = h
+                if h {
+                    cursorLookVector = .zero // Look straight at user when directly hovered
+                }
             }
         }
         .onAppear {
             withAnimation(.easeInOut(duration: 2.4).repeatForever(autoreverses: true)) {
                 breathing = true
             }
+            startMouseTracking()
+        }
+    }
+    
+    private func startMouseTracking() {
+        // Track local mouse movements to smoothly orient mascot eyes
+        NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved]) { event in
+            if self.viewModel.isExpanded && !self.isHovered {
+                let mouseX = event.locationInWindow.x
+                let mouseY = event.locationInWindow.y
+                let screenWidth = NSScreen.main?.frame.width ?? 1440
+                
+                // Normalize relative to notch right header
+                let normX = (mouseX - (screenWidth * 0.5)) / (screenWidth * 0.3)
+                let normY = (mouseY - 40) / 300.0
+                
+                let clampedX = CGFloat(max(-1.0, min(1.0, normX)))
+                let clampedY = CGFloat(max(-0.9, min(0.9, -normY)))
+                
+                withAnimation(.interactiveSpring(response: 0.30, dampingFraction: 0.75)) {
+                    self.cursorLookVector = CGSize(width: clampedX * 0.85, height: clampedY * 0.85)
+                }
+            }
+            return event
         }
     }
     
     private func performInteractiveReaction() {
+        viewModel.notifyUserActivity()
+        
         // Haptic feedback
         NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .now)
         NSSound(named: "Tink")?.play()
