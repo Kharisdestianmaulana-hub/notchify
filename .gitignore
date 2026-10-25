@@ -1,5 +1,10 @@
 DerivedData/
 build/
+dist/
+*.dmg
+build_dmg/
+dmg_source/
 *.sh
+!scripts/build_dmg.sh
 xcuserdata/
 *.xcuserdatad
