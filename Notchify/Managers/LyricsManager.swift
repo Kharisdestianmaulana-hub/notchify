@@ -10,14 +10,27 @@ class LyricsManager {
     // MARK: - Text Cleaning Helpers
     static func cleanArtist(from rawArtist: String) -> String {
         var clean = rawArtist.trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        // Remove album if formatted as "Artist – Album" or "Artist - Album"
+        for sep in [" – ", " — ", " - "] {
+            if let range = clean.range(of: sep) {
+                let candidate = String(clean[..<range.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+                if !candidate.isEmpty {
+                    clean = candidate
+                    break
+                }
+            }
+        }
+        
         // Clean YouTube topic channels (e.g. "Coldplay - Topic" -> "Coldplay")
         if clean.lowercased().hasSuffix(" - topic") {
             clean = String(clean.dropLast(8)).trimmingCharacters(in: .whitespacesAndNewlines)
         }
-        return clean
+        
+        return clean.trimmingCharacters(in: .whitespacesAndNewlines)
     }
     
-    static func cleanTitle(from rawTitle: String) -> String {
+    static func cleanTitle(from rawTitle: String, artist: String = "") -> String {
         var clean = rawTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         
         // Remove video, audio, and visualizer metadata tags common in web and video titles
@@ -51,11 +64,51 @@ class LyricsManager {
             }
         }
         
-        return clean.trimmingCharacters(in: .whitespacesAndNewlines)
+        clean = clean.trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        // If artist is known and title starts with "Artist - Track", remove "Artist - "
+        if !artist.isEmpty {
+            let lowerClean = clean.lowercased()
+            let lowerArtist = artist.lowercased()
+            for sep in [" - ", " – ", " — ", ": "] {
+                let prefix = lowerArtist + sep
+                if lowerClean.hasPrefix(prefix) {
+                    clean = String(clean.dropFirst(prefix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+                    break
+                }
+            }
+        }
+        
+        return clean
+    }
+    
+    static func extractArtistAndTitle(rawArtist: String, rawTitle: String) -> (artist: String, title: String) {
+        var artist = cleanArtist(from: rawArtist)
+        var title = cleanTitle(from: rawTitle, artist: artist)
+        
+        let genericArtists = ["youtube", "google chrome", "safari", "brave", "music", "media player", "apple music", "spotify"]
+        let isGeneric = artist.isEmpty || genericArtists.contains(artist.lowercased())
+        
+        // If artist is missing or generic, try extracting from "Artist - Track" in title
+        if isGeneric {
+            for sep in [" - ", " – ", " — "] {
+                if let range = title.range(of: sep) {
+                    let candidateArtist = String(title[..<range.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+                    let candidateTitle = String(title[range.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !candidateArtist.isEmpty && !candidateTitle.isEmpty {
+                        artist = candidateArtist
+                        title = cleanTitle(from: candidateTitle, artist: candidateArtist)
+                        break
+                    }
+                }
+            }
+        }
+        
+        return (artist, title)
     }
     
     static func strippedTitle(from title: String) -> String {
-        var clean = cleanTitle(from: title)
+        var clean = title
         
         // Secondary stripping used as fallback: remove (feat. ...), (with ...), - Remastered..., etc.
         let secondaryPatterns = [
@@ -91,8 +144,7 @@ class LyricsManager {
         duration: Double = 0,
         completion: @escaping ([LyricLine]) -> Void
     ) {
-        let title = rawTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-        let artist = rawArtist.trimmingCharacters(in: .whitespacesAndNewlines)
+        let (artist, title) = Self.extractArtistAndTitle(rawArtist: rawArtist, rawTitle: rawTitle)
         
         guard !title.isEmpty else {
             completion([])
@@ -118,103 +170,84 @@ class LyricsManager {
             DispatchQueue.main.async { completion(lines) }
         }
         
-        let cleanedTitle = Self.cleanTitle(from: title)
-        let cleanedArtist = Self.cleanArtist(from: artist)
-        
-        // Tier 1: Exact match with cleaned title & artist
-        tryExactMatch(trackName: cleanedTitle, artistName: cleanedArtist, duration: duration) { [weak self] tier1Lyrics in
+        // Tier 1: Search by track_name & artist_name (ultra-fast ~0.3s)
+        self.searchByField(trackName: title, artistName: artist, duration: duration) { [weak self] tier1Lyrics in
             guard let self = self else { return }
             if !tier1Lyrics.isEmpty {
                 finishSuccess(tier1Lyrics)
                 return
             }
             
-            // Tier 2: Stripped title (remove feat, remaster, live) if different
-            let stripped = Self.strippedTitle(from: cleanedTitle)
-            if stripped != cleanedTitle && !stripped.isEmpty {
-                self.tryExactMatch(trackName: stripped, artistName: cleanedArtist, duration: duration) { tier2Lyrics in
+            // Tier 2: Stripped title search by field (if stripped title is different)
+            let stripped = Self.strippedTitle(from: title)
+            if stripped != title && !stripped.isEmpty {
+                self.searchByField(trackName: stripped, artistName: artist, duration: duration) { [weak self] tier2Lyrics in
+                    guard let self = self else { return }
                     if !tier2Lyrics.isEmpty {
                         finishSuccess(tier2Lyrics)
                         return
                     }
                     
-                    // Tier 3: Search endpoint with stripped query
-                    self.searchLyrics(queryTitle: stripped, artist: cleanedArtist, duration: duration, completion: finishSuccess)
+                    // Tier 3: Search with query "artist title"
+                    let query = artist.isEmpty ? stripped : "\(artist) \(stripped)"
+                    self.searchByQuery(query: query, duration: duration) { tier3Lyrics in
+                        finishSuccess(tier3Lyrics)
+                    }
                 }
             } else {
-                // Tier 3: Search endpoint with cleaned query
-                self.searchLyrics(queryTitle: cleanedTitle, artist: cleanedArtist, duration: duration, completion: finishSuccess)
+                // Tier 3: Search with query "artist title"
+                let query = artist.isEmpty ? title : "\(artist) \(title)"
+                self.searchByQuery(query: query, duration: duration) { tier3Lyrics in
+                    finishSuccess(tier3Lyrics)
+                }
             }
         }
     }
     
-    // MARK: - Tier 1 & 2: Exact Match
-    private func tryExactMatch(
+    // MARK: - Search by Field (Fast API Search)
+    private func searchByField(
         trackName: String,
         artistName: String,
         duration: Double,
         completion: @escaping ([LyricLine]) -> Void
     ) {
-        guard !trackName.isEmpty, !artistName.isEmpty else {
+        guard !trackName.isEmpty else {
             completion([])
             return
         }
         
-        var components = URLComponents(string: "https://lrclib.net/api/get")
-        components?.queryItems = [
-            URLQueryItem(name: "artist_name", value: artistName),
+        var components = URLComponents(string: "https://lrclib.net/api/search")
+        var queryItems: [URLQueryItem] = [
             URLQueryItem(name: "track_name", value: trackName)
         ]
+        if !artistName.isEmpty {
+            queryItems.append(URLQueryItem(name: "artist_name", value: artistName))
+        }
+        components?.queryItems = queryItems
         
         guard let url = components?.url else {
             completion([])
             return
         }
         
-        var request = URLRequest(url: url)
-        request.setValue("Notchify/1.0", forHTTPHeaderField: "User-Agent")
-        request.timeoutInterval = 7.0
-        
-        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
-            guard let self = self, error == nil,
-                  let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200,
-                  let data = data,
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                completion([])
-                return
-            }
-            
-            if let synced = json["syncedLyrics"] as? String, !synced.isEmpty {
-                let parsed = self.parseLRC(synced)
-                if !parsed.isEmpty {
-                    completion(parsed)
-                    return
-                }
-            }
-            
-            if let plain = json["plainLyrics"] as? String, !plain.isEmpty {
-                let parsed = self.parsePlainLyrics(plain, duration: duration)
-                if !parsed.isEmpty {
-                    completion(parsed)
-                    return
-                }
-            }
-            
-            completion([])
-        }.resume()
+        executeSearchRequest(url: url, duration: duration, completion: completion)
     }
     
-    // MARK: - Tier 3: Search Fallback
-    private func searchLyrics(
-        queryTitle: String,
-        artist: String,
+    // MARK: - Search by Query (Fallback Search)
+    private func searchByQuery(
+        query: String,
         duration: Double,
         completion: @escaping ([LyricLine]) -> Void
     ) {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            completion([])
+            return
+        }
+        
         var components = URLComponents(string: "https://lrclib.net/api/search")
-        let searchQuery = artist.isEmpty ? queryTitle : "\(artist) \(queryTitle)"
         components?.queryItems = [
-            URLQueryItem(name: "q", value: searchQuery)
+            URLQueryItem(name: "q", value: trimmed)
         ]
         
         guard let url = components?.url else {
@@ -222,9 +255,18 @@ class LyricsManager {
             return
         }
         
+        executeSearchRequest(url: url, duration: duration, completion: completion)
+    }
+    
+    // MARK: - HTTP Request Executor
+    private func executeSearchRequest(
+        url: URL,
+        duration: Double,
+        completion: @escaping ([LyricLine]) -> Void
+    ) {
         var request = URLRequest(url: url)
-        request.setValue("Notchify/1.0", forHTTPHeaderField: "User-Agent")
-        request.timeoutInterval = 7.0
+        request.setValue("Notchify/1.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36", forHTTPHeaderField: "User-Agent")
+        request.timeoutInterval = 4.0
         
         URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
             guard let self = self, error == nil,
@@ -235,7 +277,7 @@ class LyricsManager {
                 return
             }
             
-            // 1. First priority: Candidates with syncedLyrics
+            // 1. Synced lyrics candidates
             let syncedCandidates = jsonArray.filter { item in
                 if let synced = item["syncedLyrics"] as? String, !synced.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     return true
@@ -264,7 +306,7 @@ class LyricsManager {
                 }
             }
             
-            // 2. Second priority: Fallback to plainLyrics if no synced lyrics are available
+            // 2. Fallback to plainLyrics if no synced lyrics available
             let plainCandidates = jsonArray.filter { item in
                 if let plain = item["plainLyrics"] as? String, !plain.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     return true

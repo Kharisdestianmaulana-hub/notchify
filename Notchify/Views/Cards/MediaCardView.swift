@@ -326,7 +326,7 @@ struct MediaCardView: View {
                     Button(action: {
                         enableLyrics = true
                         UserDefaults.standard.set(true, forKey: "enableLyrics")
-                        viewModel.fetchLyricsNow()
+                        viewModel.fetchLyricsNow(force: true)
                     }) {
                         Text(LanguageManager.tr("Enable"))
                             .font(.system(size: 11, weight: .semibold))
@@ -359,7 +359,7 @@ struct MediaCardView: View {
                         .foregroundColor(.white.opacity(0.5))
                     
                     Button(action: {
-                        viewModel.fetchLyricsNow()
+                        viewModel.fetchLyricsNow(force: true)
                     }) {
                         Text(LanguageManager.tr("Search"))
                             .font(.system(size: 11, weight: .semibold))
