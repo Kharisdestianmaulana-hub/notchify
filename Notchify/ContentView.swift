@@ -8,7 +8,7 @@ struct ContentView: View {
     @ObservedObject private var cameraManager = CameraMirrorManager.shared
     
     @AppStorage("enableGlow") private var enableGlow = false
-    @AppStorage("enableLyrics") private var enableLyrics = false
+    @AppStorage("enableLyrics") private var enableLyrics = true
     @AppStorage("appLanguage") private var appLanguage = "en" 
 
     @AppStorage("notchOpacity") private var notchOpacity: Double = 1.0
@@ -596,11 +596,12 @@ struct ContentView: View {
             }
             .onChange(of: enableLyrics) { enabled in
                 if enabled {
-                    if !viewModel.currentSong.isEmpty {
+                    if !viewModel.currentSong.isEmpty && viewModel.lyrics.isEmpty {
                         viewModel.fetchLyricsNow()
                     }
                 } else {
                     viewModel.lyrics = []
+                    viewModel.isFetchingLyrics = false
                 }
             }
             .onChange(of: viewModel.selectedTab) { newTab in

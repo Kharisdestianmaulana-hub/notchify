@@ -21,7 +21,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         UserDefaults.standard.register(defaults: [
             "enableGlow": false,
-            "enableLyrics": false,
+            "enableLyrics": true,
             "appLanguage": "en"
         ])
         
@@ -510,7 +510,7 @@ struct TabsSettingsView: View {
 
 struct AppearanceSettingsView: View {
     @AppStorage("enableGlow") private var enableGlow = false
-    @AppStorage("enableLyrics") private var enableLyrics = false
+    @AppStorage("enableLyrics") private var enableLyrics = true
     @AppStorage("preferredMusicPlayer") private var preferredMusicPlayer = "auto"
     @AppStorage("notchOpacity") private var notchOpacity: Double = 1.0
     @AppStorage("appLanguage") private var appLanguage = "en" 

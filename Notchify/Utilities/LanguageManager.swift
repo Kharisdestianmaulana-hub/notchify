@@ -303,7 +303,9 @@ struct LanguageManager {
         "Search": "Cari",
         "Lyrics": "Lirik",
         "Open Camera": "Buka Kamera",
-        "Recording: Click to view, or stop": "Merekam: Klik untuk melihat atau hentikan"
+        "Recording: Click to view, or stop": "Merekam: Klik untuk melihat atau hentikan",
+        "You have disabled the lyric search feature": "Anda mematikan fitur mencari lirik",
+        "Enable": "Aktifkan"
     ]
     
     static func tr(_ key: String) -> String {

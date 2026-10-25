@@ -3,6 +3,7 @@ import AppKit
 
 struct MediaCardView: View {
     @ObservedObject var viewModel: NotchViewModel
+    @AppStorage("enableLyrics") private var enableLyrics = true
     @State private var dragElapsed: Double = 0
     @State private var isDraggingScrubber: Bool = false
     
@@ -310,7 +311,35 @@ struct MediaCardView: View {
     // MARK: - Lyrics Scroll View
     private var lyricsScrollView: some View {
         Group {
-            if viewModel.isFetchingLyrics {
+            if !enableLyrics {
+                VStack(spacing: 10) {
+                    Image(systemName: "quote.bubble.fill")
+                        .font(.system(size: 22))
+                        .foregroundColor(.white.opacity(0.35))
+                    
+                    Text(LanguageManager.tr("You have disabled the lyric search feature"))
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(.white.opacity(0.65))
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 16)
+                    
+                    Button(action: {
+                        enableLyrics = true
+                        UserDefaults.standard.set(true, forKey: "enableLyrics")
+                        viewModel.fetchLyricsNow()
+                    }) {
+                        Text(LanguageManager.tr("Enable"))
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(.black)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 5)
+                            .background(Color.white)
+                            .clipShape(Capsule())
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if viewModel.isFetchingLyrics {
                 VStack(spacing: 6) {
                     ProgressView()
                         .scaleEffect(0.7)
