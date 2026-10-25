@@ -137,7 +137,7 @@ struct CompactClockView: View {
     let timer = Timer.publish(every: 1.0, on: .main, in: .common).autoconnect()
     
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 14) {
             // 1. Circular Battery Indicator
             CircularBatteryRingView(
                 level: Double(viewModel.batteryLevel) / 100.0,
@@ -170,6 +170,7 @@ struct CompactClockView: View {
                 spacing: 4.2
             )
         }
+        .padding(.horizontal, 16)
         .onReceive(timer) { _ in updateTime() }
         .onAppear { updateTime() }
         .padding(.top, 4) // adjust to fit within 34px height, considering flares

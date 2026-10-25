@@ -261,10 +261,13 @@ class SpeedTestManager: NSObject, ObservableObject, URLSessionDataDelegate, URLS
     
     private var activeSession: URLSession?
     private var currentTask: URLSessionTask?
+    private var phaseTimer: Timer?
+    private let targetDownloadDuration: TimeInterval = 4.5
+    private let targetUploadDuration: TimeInterval = 3.5
     
     private var phaseStartTime: Date = Date()
     private var bytesTransferred: Int64 = 0
-    private var expectedTotalBytes: Int64 = 6_000_000
+    private var expectedTotalBytes: Int64 = 50_000_000
     private var isCancelled: Bool = false
     
     override init() {
@@ -288,6 +291,8 @@ class SpeedTestManager: NSObject, ObservableObject, URLSessionDataDelegate, URLS
     
     func cancelTest() {
         isCancelled = true
+        phaseTimer?.invalidate()
+        phaseTimer = nil
         currentTask?.cancel()
         currentTask = nil
         activeSession?.invalidateAndCancel()
@@ -338,11 +343,11 @@ class SpeedTestManager: NSObject, ObservableObject, URLSessionDataDelegate, URLS
         phase = .downloading
         statusMessage = LanguageManager.tr("Testing Download...")
         bytesTransferred = 0
-        expectedTotalBytes = 6_000_000 // 6 MB
+        expectedTotalBytes = 50_000_000 // 50 MB stream for sustained testing
         phaseStartTime = Date()
         
         let config = URLSessionConfiguration.ephemeral
-        config.timeoutIntervalForRequest = 10.0
+        config.timeoutIntervalForRequest = 15.0
         activeSession = URLSession(configuration: config, delegate: self, delegateQueue: .main)
         
         guard let url = URL(string: "https://speed.cloudflare.com/__down?bytes=\(expectedTotalBytes)") else {
@@ -353,13 +358,46 @@ class SpeedTestManager: NSObject, ObservableObject, URLSessionDataDelegate, URLS
         let task = activeSession?.dataTask(with: url)
         currentTask = task
         task?.resume()
+        
+        phaseTimer?.invalidate()
+        phaseTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] t in
+            guard let self = self, self.phase == .downloading, !self.isCancelled else {
+                t.invalidate()
+                return
+            }
+            let elapsed = Date().timeIntervalSince(self.phaseStartTime)
+            self.progress = min(elapsed / self.targetDownloadDuration, 0.99)
+            if elapsed >= self.targetDownloadDuration {
+                t.invalidate()
+                self.phaseTimer = nil
+                self.finishDownloadPhase()
+            }
+        }
+    }
+    
+    private func finishDownloadPhase() {
+        guard phase == .downloading, !isCancelled else { return }
+        phaseTimer?.invalidate()
+        phaseTimer = nil
+        currentTask?.cancel()
+        currentTask = nil
+        let elapsed = max(Date().timeIntervalSince(phaseStartTime), 0.2)
+        let finalMbps = (Double(bytesTransferred) * 8.0) / (elapsed * 1_000_000.0)
+        downloadResultMbps = max(finalMbps, 0.5)
+        progress = 1.0
+        liveSpeedMbps = downloadResultMbps
+        
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+            guard let self = self, !self.isCancelled else { return }
+            self.startUploadTest()
+        }
     }
     
     private func startUploadTest() {
         phase = .uploading
         statusMessage = LanguageManager.tr("Testing Upload...")
         bytesTransferred = 0
-        expectedTotalBytes = 2_500_000 // 2.5 MB
+        expectedTotalBytes = 25_000_000 // 25 MB payload
         phaseStartTime = Date()
         
         let dummyData = Data(count: Int(expectedTotalBytes))
@@ -370,11 +408,40 @@ class SpeedTestManager: NSObject, ObservableObject, URLSessionDataDelegate, URLS
         
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.timeoutInterval = 10.0
+        request.timeoutInterval = 15.0
         
         let task = activeSession?.uploadTask(with: request, from: dummyData)
         currentTask = task
         task?.resume()
+        
+        phaseTimer?.invalidate()
+        phaseTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] t in
+            guard let self = self, self.phase == .uploading, !self.isCancelled else {
+                t.invalidate()
+                return
+            }
+            let elapsed = Date().timeIntervalSince(self.phaseStartTime)
+            self.progress = min(elapsed / self.targetUploadDuration, 0.99)
+            if elapsed >= self.targetUploadDuration {
+                t.invalidate()
+                self.phaseTimer = nil
+                self.finishUploadPhase()
+            }
+        }
+    }
+    
+    private func finishUploadPhase() {
+        guard phase == .uploading, !isCancelled else { return }
+        phaseTimer?.invalidate()
+        phaseTimer = nil
+        currentTask?.cancel()
+        currentTask = nil
+        let elapsed = max(Date().timeIntervalSince(phaseStartTime), 0.2)
+        let finalMbps = (Double(bytesTransferred) * 8.0) / (elapsed * 1_000_000.0)
+        uploadResultMbps = max(finalMbps, 0.5)
+        progress = 1.0
+        liveSpeedMbps = uploadResultMbps
+        completeTest()
     }
     
     // MARK: - URLSessionDataDelegate
@@ -386,7 +453,6 @@ class SpeedTestManager: NSObject, ObservableObject, URLSessionDataDelegate, URLS
         
         DispatchQueue.main.async {
             self.liveSpeedMbps = mbps
-            self.progress = min(Double(self.bytesTransferred) / Double(self.expectedTotalBytes), 0.95)
         }
     }
     
@@ -399,7 +465,6 @@ class SpeedTestManager: NSObject, ObservableObject, URLSessionDataDelegate, URLS
         
         DispatchQueue.main.async {
             self.liveSpeedMbps = mbps
-            self.progress = min(Double(totalBytesSent) / Double(totalBytesExpectedToSend), 0.95)
         }
     }
     
@@ -415,20 +480,10 @@ class SpeedTestManager: NSObject, ObservableObject, URLSessionDataDelegate, URLS
         }
         
         DispatchQueue.main.async {
-            let elapsed = max(Date().timeIntervalSince(self.phaseStartTime), 0.05)
             if self.phase == .downloading {
-                let finalMbps = (Double(self.bytesTransferred) * 8.0) / (elapsed * 1_000_000.0)
-                self.downloadResultMbps = max(finalMbps, 0.1)
-                self.progress = 1.0
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                    guard !self.isCancelled else { return }
-                    self.startUploadTest()
-                }
+                self.finishDownloadPhase()
             } else if self.phase == .uploading {
-                let finalMbps = (Double(self.bytesTransferred) * 8.0) / (elapsed * 1_000_000.0)
-                self.uploadResultMbps = max(finalMbps, 0.1)
-                self.progress = 1.0
-                self.completeTest()
+                self.finishUploadPhase()
             }
         }
     }

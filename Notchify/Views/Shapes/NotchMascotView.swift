@@ -237,28 +237,20 @@ final class MascotAnimationManager: ObservableObject {
     private var blinkTimer: Timer?
     private var notesTimer: Timer?
     private var breathingTimer: Timer?
-    
-    private var idleCycleIndex: Int = 0
-    private var musicVibeIndex: Int = 0
+    private var musicBeatCounter: Int = 0
     
     private init() {
         startLivingMotion()
     }
     
     func startLivingMotion() {
-        // 1. Idle Loop Timer (2.85s cycle, continuously rotating through living expressions)
+        // 1. Idle Loop Timer with dynamic, randomized intervals (2.2s to 4.0s)
         idleTimer?.invalidate()
-        let iTimer = Timer(timeInterval: 2.85, repeats: true) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                self?.advanceLivingIdleLoop()
-            }
-        }
-        RunLoop.main.add(iTimer, forMode: .common)
-        idleTimer = iTimer
+        scheduleNextIdleExpression()
         
-        // 2. Music Beat Groove (1.05s per beat, head-bobbing and vibe rotation)
+        // 2. Music Beat Groove (0.50s per beat ~ 120 BPM tempo, head-bobbing and groove)
         musicTimer?.invalidate()
-        let mTimer = Timer(timeInterval: 1.05, repeats: true) { [weak self] _ in
+        let mTimer = Timer(timeInterval: 0.50, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
                 self?.advanceLivingMusicLoop()
             }
@@ -266,9 +258,9 @@ final class MascotAnimationManager: ObservableObject {
         RunLoop.main.add(mTimer, forMode: .common)
         musicTimer = mTimer
         
-        // 3. Natural Organic Blinking (2.9s with double-blink probability)
+        // 3. Natural Organic Blinking (2.6s with double-blink probability)
         blinkTimer?.invalidate()
-        let bTimer = Timer(timeInterval: 2.9, repeats: true) { [weak self] _ in
+        let bTimer = Timer(timeInterval: 2.6, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
                 self?.triggerOrganicBlink()
             }
@@ -304,52 +296,75 @@ final class MascotAnimationManager: ObservableObject {
         breathingTimer = brTimer
     }
     
+    private func scheduleNextIdleExpression() {
+        idleTimer?.invalidate()
+        let randomDelay = Double.random(in: 2.2...4.0)
+        let timer = Timer(timeInterval: randomDelay, repeats: false) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.advanceLivingIdleLoop()
+                self?.scheduleNextIdleExpression()
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        idleTimer = timer
+    }
+    
     func advanceLivingIdleLoop() {
         let hour = Calendar.current.component(.hour, from: Date())
-        let isLateNight = (hour >= 22 || hour < 6)
+        let isLateNight = (hour >= 23 || hour < 5)
         
-        let idlePool: [LivingExpression] = isLateNight
-            ? [.openLookCenter, .zenRelax, .glanceClock, .zenRelax, .happySmile, .deepSleep]
+        let pool: [LivingExpression] = isLateNight
+            ? [.openLookCenter, .zenRelax, .glanceClock, .zenRelax, .happySmile, .sleepy]
             : [
+                .openLookCenter,
                 .openLookCenter,
                 .glanceClock,
                 .happySmile,
-                .openLookCenter,
                 .glanceBattery,
                 .winkLeft,
                 .zenRelax,
-                .openLookCenter,
                 .winkRight,
-                .happySmile
+                .glanceDown,
+                .pettedSquint
             ]
         
-        idleCycleIndex = (idleCycleIndex + 1) % idlePool.count
-        let nextExp = idlePool[idleCycleIndex]
+        var nextExp = pool.randomElement() ?? .openLookCenter
+        if nextExp == currentIdleExpression {
+            nextExp = pool.filter { $0 != self.currentIdleExpression }.randomElement() ?? .openLookCenter
+        }
         
-        withAnimation(.interactiveSpring(response: 0.32, dampingFraction: 0.72, blendDuration: 0.08)) {
+        withAnimation(.interactiveSpring(response: 0.35, dampingFraction: 0.72, blendDuration: 0.08)) {
             self.currentIdleExpression = nextExp
         }
     }
     
     func advanceLivingMusicLoop() {
-        withAnimation(.interactiveSpring(response: 0.32, dampingFraction: 0.65)) {
+        musicBeatCounter += 1
+        
+        // Rhythmic head-bob bounce on every beat (~120 BPM)!
+        withAnimation(.interactiveSpring(response: 0.26, dampingFraction: 0.52)) {
             self.musicBeatBounce.toggle()
         }
         
-        let musicPool: [LivingExpression] = [
-            .musicSmile,
-            .musicWide,
-            .musicWinkLeft,
-            .musicSmile,
-            .musicWinkRight,
-            .musicZen
-        ]
-        
-        musicVibeIndex = (musicVibeIndex + 1) % musicPool.count
-        let nextVibe = musicPool[musicVibeIndex]
-        
-        withAnimation(.interactiveSpring(response: 0.30, dampingFraction: 0.70)) {
-            self.currentMusicExpression = nextVibe
+        // Every 4 beats (~2.0 seconds), pick a randomized musical vibe expression
+        if musicBeatCounter % 4 == 0 {
+            let musicPool: [LivingExpression] = [
+                .musicSmile,      // (⌒ ⌒) grooving happily with eyes closed to melody
+                .musicWide,       // (● ●) eyes wide bobbing to the beat
+                .musicWinkLeft,   // (⌒ ●) rhythmic playful wink
+                .musicWinkRight,  // (● ⌒) rhythmic wink right
+                .pettedSquint,    // (> <) singing along / cute headbanging
+                .musicZen         // (◡ ◡) zen chill groove
+            ]
+            
+            var nextVibe = musicPool.randomElement() ?? .musicSmile
+            if nextVibe == currentMusicExpression {
+                nextVibe = musicPool.filter { $0 != self.currentMusicExpression }.randomElement() ?? .musicSmile
+            }
+            
+            withAnimation(.interactiveSpring(response: 0.28, dampingFraction: 0.65)) {
+                self.currentMusicExpression = nextVibe
+            }
         }
     }
     
@@ -739,7 +754,8 @@ struct NotchMascotEyesView: View {
     // MARK: - Dynamic Motion & Rotation Offsets
     private var currentEyeYOffset: CGFloat {
         if isMusicActive {
-            return animManager.musicBeatBounce ? -2.6 : 0.8
+            // Real musical head-bobbing: energetic upbeat (-2.8) and downbeat (+1.2)
+            return animManager.musicBeatBounce ? -2.8 : 1.2
         }
         if currentExpression == .celebrationHop {
             return -4.5
@@ -752,7 +768,8 @@ struct NotchMascotEyesView: View {
     
     private var currentOverallRotation: Double {
         if isMusicActive {
-            return animManager.musicBeatBounce ? -3.5 : 3.5
+            // Musical head tilt side to side with the beat
+            return animManager.musicBeatBounce ? -4.5 : 4.5
         }
         switch currentExpression {
         case .musicPaused:

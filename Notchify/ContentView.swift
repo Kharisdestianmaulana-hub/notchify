@@ -79,7 +79,7 @@ struct ContentView: View {
         viewModel.selectedTab = tabs[prevIdx]
     }
     
-    private let clockWidth: CGFloat = 175
+    private let clockWidth: CGFloat = 200
     private let mediaWidth: CGFloat = 265
     private let compactHeight: CGFloat = 34
     private let expandedWidth: CGFloat = 420
@@ -140,9 +140,10 @@ struct ContentView: View {
     }
     
     private func updatePomodoroPlacement(isPlaying: Bool, isPomodoroActive: Bool, animated: Bool = true) {
+        pauseGraceTimer?.invalidate()
+        pauseGraceTimer = nil
+        
         guard isPomodoroActive else {
-            pauseGraceTimer?.invalidate()
-            pauseGraceTimer = nil
             if animated {
                 withAnimation(.spring(response: 0.45, dampingFraction: 0.72)) {
                     isPomodoroInMainIsland = false
@@ -155,8 +156,6 @@ struct ContentView: View {
         
         if isPlaying {
             // Media is playing: timer must detach to the right side island
-            pauseGraceTimer?.invalidate()
-            pauseGraceTimer = nil
             if animated {
                 withAnimation(.spring(response: 0.45, dampingFraction: 0.72)) {
                     isPomodoroInMainIsland = false
@@ -165,28 +164,13 @@ struct ContentView: View {
                 isPomodoroInMainIsland = false
             }
         } else {
-            // Media is NOT playing
-            if viewModel.currentSong.isEmpty || viewModel.currentSong == "No Media Playing" {
-                // No media at all: immediately place timer in main island
-                pauseGraceTimer?.invalidate()
-                pauseGraceTimer = nil
-                if animated {
-                    withAnimation(.spring(response: 0.45, dampingFraction: 0.72)) {
-                        isPomodoroInMainIsland = true
-                    }
-                } else {
+            // Media is NOT playing: timer goes straight to the main island immediately
+            if animated {
+                withAnimation(.spring(response: 0.45, dampingFraction: 0.72)) {
                     isPomodoroInMainIsland = true
                 }
             } else {
-                // Media was playing but is currently paused: wait 10 seconds before moving into main island
-                if !isPomodoroInMainIsland && pauseGraceTimer == nil {
-                    pauseGraceTimer = Timer.scheduledTimer(withTimeInterval: 10.0, repeats: false) { _ in
-                        withAnimation(.spring(response: 0.45, dampingFraction: 0.72)) {
-                            self.isPomodoroInMainIsland = true
-                        }
-                        self.pauseGraceTimer = nil
-                    }
-                }
+                isPomodoroInMainIsland = true
             }
         }
     }

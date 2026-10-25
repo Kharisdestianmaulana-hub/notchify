@@ -48,8 +48,16 @@ class NotchViewModel: ObservableObject {
     @Published var mascotWakeUpTrigger: Bool = false
     @Published var cursorNormalizedOffset: CGSize = .zero
     var lastUserActivityDate: Date = Date()
+    private var lastActivityNotifyTime: Date = Date()
     
     func notifyUserActivity() {
+        let now = Date()
+        if now.timeIntervalSince(lastActivityNotifyTime) < 1.0 && !isDeepIdle {
+            lastUserActivityDate = now
+            return
+        }
+        lastActivityNotifyTime = now
+        
         if isDeepIdle {
             isDeepIdle = false
             mascotWakeUpTrigger = true
@@ -57,7 +65,7 @@ class NotchViewModel: ObservableObject {
                 self.mascotWakeUpTrigger = false
             }
         }
-        lastUserActivityDate = Date()
+        lastUserActivityDate = now
     }
     
     // Calculator State
@@ -323,11 +331,16 @@ class NotchViewModel: ObservableObject {
         lastChangeCount = pasteboard.changeCount
         
         NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            self?.notifyUserActivity()
             self?.handleKeyEvent(event)
         }
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            self?.notifyUserActivity()
             self?.handleKeyEvent(event)
             return event
+        }
+        NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved, .leftMouseDown, .rightMouseDown]) { [weak self] _ in
+            self?.notifyUserActivity()
         }
         
         // Smart fallback interval (1.5s) while instant checks are triggered via Cmd+C / Cmd+X
@@ -369,9 +382,12 @@ class NotchViewModel: ObservableObject {
                 }
             }
         }
-        Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
+        Timer.scheduledTimer(withTimeInterval: 2.5, repeats: true) { [weak self] _ in
             guard let self = self else { return }
-            if Date().timeIntervalSince(self.lastUserActivityDate) > 45.0 && !self.isPlaying && !self.isPomodoroActive && !self.isExpanded {
+            let systemIdleSeconds = CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: CGEventType(rawValue: ~0)!)
+            if systemIdleSeconds < 5.0 {
+                self.notifyUserActivity()
+            } else if systemIdleSeconds > 90.0 && !self.isPlaying && !self.isPomodoroActive && !self.isExpanded {
                 if !self.isDeepIdle {
                     self.isDeepIdle = true
                 }
