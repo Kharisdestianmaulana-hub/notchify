@@ -396,6 +396,10 @@ struct MediaCardView: View {
                             withAnimation(.easeInOut(duration: 0.4)) {
                                 proxy.scrollTo(idx, anchor: .center)
                             }
+                        } else if !viewModel.lyrics.isEmpty {
+                            withAnimation(.easeInOut(duration: 0.4)) {
+                                proxy.scrollTo(0, anchor: .top)
+                            }
                         }
                     }
                     .onChange(of: viewModel.lyrics.count) { _ in
@@ -403,6 +407,10 @@ struct MediaCardView: View {
                             if viewModel.currentLyricIndex >= 0 {
                                 withAnimation(.easeInOut(duration: 0.4)) {
                                     proxy.scrollTo(viewModel.currentLyricIndex, anchor: .center)
+                                }
+                            } else if !viewModel.lyrics.isEmpty {
+                                withAnimation(.easeInOut(duration: 0.4)) {
+                                    proxy.scrollTo(0, anchor: .top)
                                 }
                             }
                         }
@@ -412,6 +420,10 @@ struct MediaCardView: View {
                             if viewModel.currentLyricIndex >= 0 {
                                 withAnimation(.easeInOut(duration: 0.4)) {
                                     proxy.scrollTo(viewModel.currentLyricIndex, anchor: .center)
+                                }
+                            } else if !viewModel.lyrics.isEmpty {
+                                withAnimation(.easeInOut(duration: 0.4)) {
+                                    proxy.scrollTo(0, anchor: .top)
                                 }
                             }
                         }

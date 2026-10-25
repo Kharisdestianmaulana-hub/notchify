@@ -364,7 +364,7 @@ class NotchViewModel: ObservableObject {
             guard let self = self else { return }
             if self.isPlaying && self.duration > 0 {
                 self.elapsed = min(self.elapsed + 0.5, self.duration)
-                if UserDefaults.standard.bool(forKey: "enableLyrics") && !self.lyrics.isEmpty {
+                if (UserDefaults.standard.bool(forKey: "enableLyrics") || self.showMediaLyrics) && !self.lyrics.isEmpty {
                     self.updateLyricIndex()
                 }
             }
@@ -380,11 +380,25 @@ class NotchViewModel: ObservableObject {
     }
     
     private func updateLyricIndex() {
-        guard !lyrics.isEmpty else { return }
+        guard !lyrics.isEmpty else {
+            if currentLyricIndex != -1 { currentLyricIndex = -1 }
+            return
+        }
+        
+        // If the song is in the intro before the first lyric line
+        if let first = lyrics.first, self.elapsed + 0.2 < first.time {
+            if self.currentLyricIndex != -1 {
+                withAnimation(.easeInOut(duration: 0.3)) {
+                    self.currentLyricIndex = -1
+                }
+            }
+            return
+        }
+        
         // Show lyric slightly ahead so it appears when the singer starts
         if let index = lyrics.lastIndex(where: { $0.time <= self.elapsed + 0.2 }) {
             if self.currentLyricIndex != index {
-                withAnimation(.easeInOut(duration: 0.5)) {
+                withAnimation(.easeInOut(duration: 0.35)) {
                     self.currentLyricIndex = index
                 }
             }
@@ -403,6 +417,10 @@ class NotchViewModel: ObservableObject {
                     let oldSong = self.currentSong
                     self.currentSong = title
                     self.currentArtist = artist ?? ""
+                    self.elapsed = elapsed
+                    self.duration = duration
+                    self.lyrics = []
+                    self.currentLyricIndex = -1
                     
                     if !oldSong.isEmpty && oldSong != "No Media Playing" {
                         self.mascotNewTrackCelebration = true
@@ -412,13 +430,12 @@ class NotchViewModel: ObservableObject {
                     }
                     
                     // Fetch new lyrics only if enabled or user opened lyrics
-                    self.lyrics = []
-                    self.currentLyricIndex = -1
                     if UserDefaults.standard.bool(forKey: "enableLyrics") || self.showMediaLyrics {
                         self.isFetchingLyrics = true
-                        LyricsManager.shared.fetchLyrics(for: title, artist: artist ?? "") { [weak self] newLyrics in
+                        LyricsManager.shared.fetchLyrics(for: title, artist: artist ?? "", duration: duration) { [weak self] newLyrics in
                             self?.isFetchingLyrics = false
                             self?.lyrics = newLyrics
+                            self?.updateLyricIndex()
                         }
                     }
                 }
@@ -661,9 +678,10 @@ class NotchViewModel: ObservableObject {
     func fetchLyricsNow() {
         guard !currentSong.isEmpty else { return }
         isFetchingLyrics = true
-        LyricsManager.shared.fetchLyrics(for: currentSong, artist: currentArtist) { [weak self] newLyrics in
+        LyricsManager.shared.fetchLyrics(for: currentSong, artist: currentArtist, duration: duration) { [weak self] newLyrics in
             self?.isFetchingLyrics = false
             self?.lyrics = newLyrics
+            self?.updateLyricIndex()
         }
     }
     
