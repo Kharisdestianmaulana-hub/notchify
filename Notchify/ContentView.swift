@@ -623,9 +623,14 @@ struct ContentView: View {
                 if newTab != .mirror && !cameraManager.isRecordingVideo {
                     CameraMirrorManager.shared.stopSession()
                 }
+                if newTab == .media {
+                    viewModel.refreshMediaNow()
+                }
             }
             .onChange(of: viewModel.isExpanded) { isExpanded in
-                if !isExpanded {
+                if isExpanded {
+                    viewModel.refreshMediaNow()
+                } else {
                     showTabPicker = false
                     if !cameraManager.isRecordingVideo {
                         CameraMirrorManager.shared.stopSession()

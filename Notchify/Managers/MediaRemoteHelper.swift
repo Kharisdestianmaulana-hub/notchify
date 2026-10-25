@@ -280,15 +280,24 @@ class MediaRemoteHelper {
             
             var elapsed = staticElapsed
             if isPlaying {
-                if let ts = info["kMRMediaRemoteNowPlayingInfoTimestamp"] as? Date {
+                var timestamp: Date? = nil
+                if let d = info["kMRMediaRemoteNowPlayingInfoTimestamp"] as? Date {
+                    timestamp = d
+                } else if let nsd = info["kMRMediaRemoteNowPlayingInfoTimestamp"] as? NSDate {
+                    timestamp = nsd as Date
+                }
+                
+                if let ts = timestamp {
                     let timeSince = Date().timeIntervalSince(ts)
-                    if timeSince >= 0 && timeSince < 15.0 {
-                        elapsed += timeSince * playbackRate
+                    if timeSince >= 0 {
+                        elapsed += timeSince * (playbackRate > 0 ? playbackRate : 1.0)
                     }
                 }
             }
             if duration > 0 {
                 elapsed = max(0, min(elapsed, duration))
+            } else {
+                elapsed = max(0, elapsed)
             }
             
             var artistStr = artist

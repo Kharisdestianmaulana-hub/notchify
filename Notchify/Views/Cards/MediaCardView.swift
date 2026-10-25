@@ -3,10 +3,12 @@ import AppKit
 
 struct MediaCardView: View {
     @ObservedObject var viewModel: NotchViewModel
-    @State private var localElapsed: Double = 0
+    @State private var dragElapsed: Double = 0
     @State private var isDraggingScrubber: Bool = false
     
-    private let timer = Timer.publish(every: 0.5, on: .main, in: .common).autoconnect()
+    private var displayElapsed: Double {
+        isDraggingScrubber ? dragElapsed : viewModel.elapsed
+    }
     
     var body: some View {
         Group {
@@ -24,14 +26,6 @@ struct MediaCardView: View {
                         insertion: .opacity.combined(with: .scale(scale: 0.96)),
                         removal: .opacity.combined(with: .scale(scale: 0.96))
                     ))
-            }
-        }
-        .onAppear {
-            localElapsed = viewModel.elapsed
-        }
-        .onReceive(timer) { _ in
-            if viewModel.isPlaying && !isDraggingScrubber {
-                localElapsed = viewModel.elapsed
             }
         }
     }
@@ -177,7 +171,7 @@ struct MediaCardView: View {
     private var scrubberRow: some View {
         HStack(spacing: 8) {
             // Elapsed Time
-            Text(formatTime(localElapsed))
+            Text(formatTime(displayElapsed))
                 .font(.system(size: 11, weight: .semibold, design: .monospaced).monospacedDigit())
                 .foregroundColor(.white)
             
@@ -185,7 +179,7 @@ struct MediaCardView: View {
             GeometryReader { geo in
                 let totalWidth = geo.size.width
                 let maxDur = max(1, viewModel.duration)
-                let pct = max(0, min(1, localElapsed / maxDur))
+                let pct = max(0, min(1, displayElapsed / maxDur))
                 let fillWidth = max(0, min(totalWidth, totalWidth * CGFloat(pct)))
                 
                 ZStack(alignment: .leading) {
@@ -206,14 +200,14 @@ struct MediaCardView: View {
                         .onChanged { val in
                             isDraggingScrubber = true
                             let dragPct = max(0, min(1, val.location.x / totalWidth))
-                            localElapsed = dragPct * maxDur
+                            dragElapsed = dragPct * maxDur
                         }
                         .onEnded { val in
                             let dragPct = max(0, min(1, val.location.x / totalWidth))
                             let targetTime = dragPct * maxDur
-                            localElapsed = targetTime
+                            dragElapsed = targetTime
                             viewModel.seek(to: targetTime)
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                                 isDraggingScrubber = false
                             }
                         }
@@ -230,7 +224,7 @@ struct MediaCardView: View {
     
     private var remainingTimeString: String {
         if viewModel.duration > 0 {
-            let remain = max(0, viewModel.duration - localElapsed)
+            let remain = max(0, viewModel.duration - displayElapsed)
             return "-" + formatTime(remain)
         }
         return "-0:00"

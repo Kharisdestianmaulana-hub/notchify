@@ -460,14 +460,9 @@ class NotchViewModel: ObservableObject {
                 }
                 self.isPlaying = isPlaying
                 
-                // Sync elapsed time aggressively for accurate lyrics
+                // Sync elapsed time directly from authoritative playback source
                 self.duration = duration
-                if abs(self.elapsed - elapsed) > 0.5 {
-                    self.elapsed = elapsed
-                } else {
-                    // Small micro-adjustments without jumping
-                    self.elapsed = (self.elapsed + elapsed) / 2
-                }
+                self.elapsed = elapsed
                 self.updateLyricIndex()
                 
                 if isPlaying {
@@ -667,12 +662,19 @@ class NotchViewModel: ObservableObject {
         self.elapsed = time
     }
     
+    func refreshMediaNow() {
+        fetchMedia()
+    }
+    
     func toggleMediaLyrics() {
         withAnimation(.interactiveSpring(response: 0.38, dampingFraction: 0.76)) {
             showMediaLyrics.toggle()
         }
-        if showMediaLyrics && lyrics.isEmpty && !currentSong.isEmpty {
-            fetchLyricsNow()
+        if showMediaLyrics {
+            updateLyricIndex()
+            if lyrics.isEmpty && !currentSong.isEmpty {
+                fetchLyricsNow()
+            }
         }
     }
     
