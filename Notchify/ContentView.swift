@@ -112,17 +112,15 @@ struct ContentView: View {
     private var currentHeight: CGFloat {
         if viewModel.isExpanded {
             if viewModel.selectedTab == .calculator { return 285 }
-            if viewModel.selectedTab == .media {
-                return viewModel.showMediaLyrics ? 195 : 172
-            }
+            if viewModel.selectedTab == .media { return 200 }
             if viewModel.selectedTab == .weather { return 175 }
-            if viewModel.selectedTab == .system { return 225 }
+            if viewModel.selectedTab == .system { return 195 }
             if viewModel.selectedTab == .agenda { return viewModel.isPinningExpansion ? 370 : 285 }
             if viewModel.selectedTab == .pomodoro { return 195 }
             if viewModel.selectedTab == .dropzone { return viewModel.stagedFiles.isEmpty ? 190 : 205 }
             if viewModel.selectedTab == .clipboard { return viewModel.clipboardItems.isEmpty ? 190 : 245 }
             if viewModel.selectedTab == .mirror { return 360 }
-            if viewModel.selectedTab == .notes { return 280 }
+            if viewModel.selectedTab == .notes { return 285 }
             if viewModel.selectedTab == .network { return 255 }
             return 160
         }
@@ -346,8 +344,8 @@ struct ContentView: View {
                                 }
                                 .compositingGroup()
                                 .padding(.horizontal, 42)
-                                .padding(.top, 14)
-                                .padding(.bottom, 12)
+                                .padding(.top, 12)
+                                .padding(.bottom, 8)
                                 
                                 // Floating Chevron Overlays (Cleanly inset inside Notch body, anchored vertically & consistently visible)
                                 HStack {
@@ -407,11 +405,13 @@ struct ContentView: View {
                                 }
                                 .padding(.top, 28)
                             }
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                             
                             // Persistent Global Tab Pagination Dots across all tabs
                             tabPaginationDotsView
                                 .padding(.bottom, 8)
                         }
+                        .frame(width: currentWidth, height: currentHeight)
                         .transition(.scale(scale: 0.01, anchor: .top))
                         .simultaneousGesture(
                             DragGesture(minimumDistance: 25)
