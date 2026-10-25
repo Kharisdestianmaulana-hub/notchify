@@ -1,30 +1,26 @@
 import Foundation
 
-
 class LyricsManager {
     static let shared = LyricsManager()
     
+    // In-memory cache to avoid repeated network requests for the same track
+    private var lyricsCache: [String: [LyricLine]] = [:]
+    private let cacheLock = NSLock()
+    
     // MARK: - Text Cleaning Helpers
     static func cleanArtist(from rawArtist: String) -> String {
-        var clean = rawArtist
-        // If artist contains " – " (e.g., "Artist – Album") or " - ", take the first part
-        if let dashRange = clean.range(of: " – ") {
-            clean = String(clean[..<dashRange.lowerBound])
-        } else if let dashRange = clean.range(of: " - ") {
-            clean = String(clean[..<dashRange.lowerBound])
+        var clean = rawArtist.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Clean YouTube topic channels (e.g. "Coldplay - Topic" -> "Coldplay")
+        if clean.lowercased().hasSuffix(" - topic") {
+            clean = String(clean.dropLast(8)).trimmingCharacters(in: .whitespacesAndNewlines)
         }
-        return clean.trimmingCharacters(in: .whitespacesAndNewlines)
+        return clean
     }
     
     static func cleanTitle(from rawTitle: String) -> String {
-        var clean = rawTitle
+        var clean = rawTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         
-        // If title contains "Artist - Song Title" (common in browser/YouTube metadata), take the song part
-        if let dashRange = clean.range(of: " - ") {
-            clean = String(clean[dashRange.upperBound...])
-        }
-        
-        // Patterns to remove (case-insensitive)
+        // Remove video, audio, and visualizer metadata tags common in web and video titles
         let patterns = [
             "\\s*\\(Official\\s+(Music\\s+)?Video\\)",
             "\\s*\\[Official\\s+(Music\\s+)?Video\\]",
@@ -38,19 +34,43 @@ class LyricsManager {
             "\\s*\\[Lyrics?\\]",
             "\\s*\\(Audio\\)",
             "\\s*\\[Audio\\]",
-            "\\s*\\(Remastered[^)]*\\)",
-            "\\s*\\[Remastered[^\\]]*\\]",
-            "\\s*\\(Live[^)]*\\)",
-            "\\s*\\[Live[^\\]]*\\]",
+            "\\s*\\(MV\\)",
+            "\\s*\\[MV\\]",
+            "\\s*\\(Official\\)",
+            "\\s*\\[Official\\]"
+        ]
+        
+        for pattern in patterns {
+            if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) {
+                clean = regex.stringByReplacingMatches(
+                    in: clean,
+                    options: [],
+                    range: NSRange(clean.startIndex..., in: clean),
+                    withTemplate: ""
+                )
+            }
+        }
+        
+        return clean.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    
+    static func strippedTitle(from title: String) -> String {
+        var clean = cleanTitle(from: title)
+        
+        // Secondary stripping used as fallback: remove (feat. ...), (with ...), - Remastered..., etc.
+        let secondaryPatterns = [
             "\\s*\\(feat\\.[^)]*\\)",
             "\\s*\\[feat\\.[^\\]]*\\]",
             "\\s*\\(ft\\.[^)]*\\)",
             "\\s*\\[ft\\.[^\\]]*\\]",
             "\\s*\\(with[^)]*\\)",
-            "\\s*\\[with[^\\]]*\\]"
+            "\\s*\\[with[^\\]]*\\]",
+            "\\s*-\\s*(Remastered|Live|Radio Edit|Acoustic|Bonus Track).*",
+            "\\s*\\((Remastered|Live|Radio Edit|Acoustic|Bonus Track)[^)]*\\)",
+            "\\s*\\[(Remastered|Live|Radio Edit|Acoustic|Bonus Track)[^\\]]*\\]"
         ]
         
-        for pattern in patterns {
+        for pattern in secondaryPatterns {
             if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) {
                 clean = regex.stringByReplacingMatches(
                     in: clean,
@@ -71,81 +91,151 @@ class LyricsManager {
         duration: Double = 0,
         completion: @escaping ([LyricLine]) -> Void
     ) {
-        let cleanTitle = Self.cleanTitle(from: rawTitle)
-        let cleanArtist = Self.cleanArtist(from: rawArtist)
+        let title = rawTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        let artist = rawArtist.trimmingCharacters(in: .whitespacesAndNewlines)
         
-        guard !cleanTitle.isEmpty else {
+        guard !title.isEmpty else {
             completion([])
             return
         }
         
-        // 1. Try exact match using URLComponents
+        // 0. Cache check
+        let cacheKey = "\(artist.lowercased()) - \(title.lowercased())"
+        cacheLock.lock()
+        if let cached = lyricsCache[cacheKey], !cached.isEmpty {
+            cacheLock.unlock()
+            DispatchQueue.main.async { completion(cached) }
+            return
+        }
+        cacheLock.unlock()
+        
+        let finishSuccess: ([LyricLine]) -> Void = { [weak self] lines in
+            if !lines.isEmpty {
+                self?.cacheLock.lock()
+                self?.lyricsCache[cacheKey] = lines
+                self?.cacheLock.unlock()
+            }
+            DispatchQueue.main.async { completion(lines) }
+        }
+        
+        let cleanedTitle = Self.cleanTitle(from: title)
+        let cleanedArtist = Self.cleanArtist(from: artist)
+        
+        // Tier 1: Exact match with cleaned title & artist
+        tryExactMatch(trackName: cleanedTitle, artistName: cleanedArtist, duration: duration) { [weak self] tier1Lyrics in
+            guard let self = self else { return }
+            if !tier1Lyrics.isEmpty {
+                finishSuccess(tier1Lyrics)
+                return
+            }
+            
+            // Tier 2: Stripped title (remove feat, remaster, live) if different
+            let stripped = Self.strippedTitle(from: cleanedTitle)
+            if stripped != cleanedTitle && !stripped.isEmpty {
+                self.tryExactMatch(trackName: stripped, artistName: cleanedArtist, duration: duration) { tier2Lyrics in
+                    if !tier2Lyrics.isEmpty {
+                        finishSuccess(tier2Lyrics)
+                        return
+                    }
+                    
+                    // Tier 3: Search endpoint with stripped query
+                    self.searchLyrics(queryTitle: stripped, artist: cleanedArtist, duration: duration, completion: finishSuccess)
+                }
+            } else {
+                // Tier 3: Search endpoint with cleaned query
+                self.searchLyrics(queryTitle: cleanedTitle, artist: cleanedArtist, duration: duration, completion: finishSuccess)
+            }
+        }
+    }
+    
+    // MARK: - Tier 1 & 2: Exact Match
+    private func tryExactMatch(
+        trackName: String,
+        artistName: String,
+        duration: Double,
+        completion: @escaping ([LyricLine]) -> Void
+    ) {
+        guard !trackName.isEmpty, !artistName.isEmpty else {
+            completion([])
+            return
+        }
+        
         var components = URLComponents(string: "https://lrclib.net/api/get")
         components?.queryItems = [
-            URLQueryItem(name: "artist_name", value: cleanArtist),
-            URLQueryItem(name: "track_name", value: cleanTitle)
+            URLQueryItem(name: "artist_name", value: artistName),
+            URLQueryItem(name: "track_name", value: trackName)
         ]
         
         guard let url = components?.url else {
-            searchLyrics(cleanTitle: cleanTitle, cleanArtist: cleanArtist, duration: duration, completion: completion)
+            completion([])
             return
         }
         
         var request = URLRequest(url: url)
         request.setValue("Notchify/1.0", forHTTPHeaderField: "User-Agent")
-        request.timeoutInterval = 8.0
+        request.timeoutInterval = 7.0
         
         URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
-            guard let self = self else { return }
+            guard let self = self, error == nil,
+                  let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200,
+                  let data = data,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                completion([])
+                return
+            }
             
-            if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200,
-               let data = data,
-               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-               let synced = json["syncedLyrics"] as? String, !synced.isEmpty {
+            if let synced = json["syncedLyrics"] as? String, !synced.isEmpty {
                 let parsed = self.parseLRC(synced)
                 if !parsed.isEmpty {
-                    DispatchQueue.main.async {
-                        completion(parsed)
-                    }
+                    completion(parsed)
                     return
                 }
             }
             
-            // If exact match failed or had no synced lyrics, fallback to smart search
-            self.searchLyrics(cleanTitle: cleanTitle, cleanArtist: cleanArtist, duration: duration, completion: completion)
+            if let plain = json["plainLyrics"] as? String, !plain.isEmpty {
+                let parsed = self.parsePlainLyrics(plain, duration: duration)
+                if !parsed.isEmpty {
+                    completion(parsed)
+                    return
+                }
+            }
+            
+            completion([])
         }.resume()
     }
     
+    // MARK: - Tier 3: Search Fallback
     private func searchLyrics(
-        cleanTitle: String,
-        cleanArtist: String,
+        queryTitle: String,
+        artist: String,
         duration: Double,
         completion: @escaping ([LyricLine]) -> Void
     ) {
         var components = URLComponents(string: "https://lrclib.net/api/search")
-        let searchQuery = cleanArtist.isEmpty ? cleanTitle : "\(cleanArtist) \(cleanTitle)"
+        let searchQuery = artist.isEmpty ? queryTitle : "\(artist) \(queryTitle)"
         components?.queryItems = [
             URLQueryItem(name: "q", value: searchQuery)
         ]
         
         guard let url = components?.url else {
-            DispatchQueue.main.async { completion([]) }
+            completion([])
             return
         }
         
         var request = URLRequest(url: url)
         request.setValue("Notchify/1.0", forHTTPHeaderField: "User-Agent")
-        request.timeoutInterval = 8.0
+        request.timeoutInterval = 7.0
         
         URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
-            guard let self = self else { return }
-            guard let data = data, error == nil,
-                  let jsonArray = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
-                DispatchQueue.main.async { completion([]) }
+            guard let self = self, error == nil,
+                  let data = data,
+                  let jsonArray = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]],
+                  !jsonArray.isEmpty else {
+                completion([])
                 return
             }
             
-            // Filter candidates that actually contain syncedLyrics
+            // 1. First priority: Candidates with syncedLyrics
             let syncedCandidates = jsonArray.filter { item in
                 if let synced = item["syncedLyrics"] as? String, !synced.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     return true
@@ -153,123 +243,115 @@ class LyricsManager {
                 return false
             }
             
-            guard !syncedCandidates.isEmpty else {
-                DispatchQueue.main.async { completion([]) }
-                return
-            }
-            
-            // Smart candidate selection:
-            // 1. Prefer candidates whose duration is within ±5 seconds of the playing track
-            // 2. Prefer candidates whose trackName closely matches cleanTitle
-            let bestMatch = syncedCandidates.min { a, b in
-                let durA = (a["duration"] as? NSNumber)?.doubleValue ?? (a["duration"] as? Double ?? 0)
-                let durB = (b["duration"] as? NSNumber)?.doubleValue ?? (b["duration"] as? Double ?? 0)
-                
+            if !syncedCandidates.isEmpty {
+                let bestMatch: [String: Any]
                 if duration > 0 {
-                    let diffA = abs(durA - duration)
-                    let diffB = abs(durB - duration)
-                    // If difference is substantial, pick the closer duration
-                    if abs(diffA - diffB) > 3.0 {
-                        return diffA < diffB
+                    bestMatch = syncedCandidates.min(by: { a, b in
+                        let durA = (a["duration"] as? Double) ?? ((a["duration"] as? NSNumber)?.doubleValue ?? 0)
+                        let durB = (b["duration"] as? Double) ?? ((b["duration"] as? NSNumber)?.doubleValue ?? 0)
+                        return abs(durA - duration) < abs(durB - duration)
+                    }) ?? syncedCandidates[0]
+                } else {
+                    bestMatch = syncedCandidates[0]
+                }
+                
+                if let synced = bestMatch["syncedLyrics"] as? String {
+                    let parsed = self.parseLRC(synced)
+                    if !parsed.isEmpty {
+                        completion(parsed)
+                        return
                     }
                 }
-                
-                // Secondary check: name matching
-                let nameA = (a["trackName"] as? String ?? (a["name"] as? String ?? "")).lowercased()
-                let nameB = (b["trackName"] as? String ?? (b["name"] as? String ?? "")).lowercased()
-                let target = cleanTitle.lowercased()
-                
-                let exactA = nameA == target
-                let exactB = nameB == target
-                if exactA != exactB {
-                    return exactA && !exactB
-                }
-                
-                return false
-            } ?? syncedCandidates[0]
+            }
             
-            if let synced = bestMatch["syncedLyrics"] as? String {
-                let parsed = self.parseLRC(synced)
-                DispatchQueue.main.async {
-                    completion(parsed)
+            // 2. Second priority: Fallback to plainLyrics if no synced lyrics are available
+            let plainCandidates = jsonArray.filter { item in
+                if let plain = item["plainLyrics"] as? String, !plain.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    return true
                 }
-            } else {
-                DispatchQueue.main.async {
-                    completion([])
+                return false
+            }
+            
+            if let firstPlain = plainCandidates.first, let plainText = firstPlain["plainLyrics"] as? String {
+                let parsed = self.parsePlainLyrics(plainText, duration: duration)
+                if !parsed.isEmpty {
+                    completion(parsed)
+                    return
                 }
             }
+            
+            completion([])
         }.resume()
     }
     
-    // MARK: - Robust LRC Parser
+    // MARK: - Robust Bracket-Based LRC Parser
     func parseLRC(_ lrc: String) -> [LyricLine] {
         var lines: [LyricLine] = []
         let rawLines = lrc.components(separatedBy: .newlines)
         
-        // Regex to extract all timestamps like [00:15.50] or [01:23,45] or [01:02:15.50]
-        let timeTagRegex = try? NSRegularExpression(pattern: "\\[(\\d{1,2}:\\d{2}(?:[:.]\\d{2,3})?)\\]")
-        
         for rawLine in rawLines {
-            let line = rawLine.trimmingCharacters(in: .whitespaces)
-            guard line.hasPrefix("[") else { continue }
+            let trimmed = rawLine.trimmingCharacters(in: .whitespaces)
+            guard trimmed.hasPrefix("[") else { continue }
             
-            // Skip metadata lines like [offset:...], [ar:...], [ti:...], etc.
-            let lower = line.lowercased()
-            if lower.hasPrefix("[offset:") || lower.hasPrefix("[ar:") || lower.hasPrefix("[ti:") ||
-               lower.hasPrefix("[al:") || lower.hasPrefix("[by:") || lower.hasPrefix("[re:") ||
-               lower.hasPrefix("[ve:") || lower.hasPrefix("[length:") {
+            var remaining = trimmed
+            var timestamps: [Double] = []
+            
+            // Extract all [timestamp] tags from the line (e.g. [00:15.50][01:25.50]Chorus)
+            while remaining.hasPrefix("["), let closeBracket = remaining.firstIndex(of: "]") {
+                let tagContent = String(remaining[remaining.index(after: remaining.startIndex)..<closeBracket]).trimmingCharacters(in: .whitespaces)
+                remaining = String(remaining[remaining.index(after: closeBracket)...]).trimmingCharacters(in: .whitespaces)
+                
+                let normalized = tagContent.replacingOccurrences(of: ",", with: ".")
+                let parts = normalized.split(separator: ":")
+                
+                var seconds: Double? = nil
+                if parts.count == 2 {
+                    if let m = Double(parts[0]), let s = Double(parts[1]) {
+                        seconds = (m * 60.0) + s
+                    }
+                } else if parts.count == 3 {
+                    if let h = Double(parts[0]), let m = Double(parts[1]), let s = Double(parts[2]) {
+                        seconds = (h * 3600.0) + (m * 60.0) + s
+                    }
+                }
+                
+                if let sec = seconds {
+                    timestamps.append(sec)
+                }
+            }
+            
+            let text = remaining.trimmingCharacters(in: .whitespaces)
+            guard !text.isEmpty else { continue }
+            
+            // Filter out non-lyric credit lines
+            let lower = text.lowercased()
+            if lower.hasPrefix("synced by") || lower.hasPrefix("sync by") ||
+               lower.hasPrefix("lyrics by") || lower.hasPrefix("encoded by") ||
+               lower.hasPrefix("created by") || lower.hasPrefix("source:") {
                 continue
             }
             
-            guard let regex = timeTagRegex else { continue }
-            let nsLine = line as NSString
-            let matches = regex.matches(in: line, options: [], range: NSRange(location: 0, length: nsLine.length))
-            guard !matches.isEmpty else { continue }
-            
-            // Extract the lyric text after the last bracket
-            if let lastMatch = matches.last {
-                let textStartIndex = lastMatch.range.location + lastMatch.range.length
-                guard textStartIndex <= nsLine.length else { continue }
-                let text = nsLine.substring(from: textStartIndex).trimmingCharacters(in: .whitespaces)
-                
-                // Skip empty text or credit lines
-                guard !text.isEmpty else { continue }
-                let textLower = text.lowercased()
-                if textLower.hasPrefix("synced by") || textLower.hasPrefix("sync by") ||
-                   textLower.hasPrefix("lyrics by") || textLower.hasPrefix("encoded by") ||
-                   textLower.hasPrefix("created by") || textLower.hasPrefix("source:") {
-                    continue
-                }
-                
-                // A single line may have multiple timestamps (e.g. [00:15.50][01:25.50]Chorus)
-                for match in matches {
-                    let timeStr = nsLine.substring(with: match.range(at: 1))
-                    if let seconds = parseTimeSeconds(timeStr) {
-                        lines.append(LyricLine(time: seconds, text: text))
-                    }
-                }
+            for t in timestamps {
+                lines.append(LyricLine(time: t, text: text))
             }
         }
         
-        // CRITICAL: Sort lines strictly by timestamp so monotonic search always works
+        // CRITICAL: Sort lines strictly by timestamp so monotonic search always works and lyrics don't jump
         lines.sort { $0.time < $1.time }
         return lines
     }
     
-    private func parseTimeSeconds(_ timeString: String) -> Double? {
-        // Handles mm:ss.xx, mm:ss,xx, or hh:mm:ss.xx
-        let normalized = timeString.replacingOccurrences(of: ",", with: ".")
-        let parts = normalized.split(separator: ":")
+    // MARK: - Plain Lyrics Parser (Fallback)
+    func parsePlainLyrics(_ plain: String, duration: Double) -> [LyricLine] {
+        let rawLines = plain.components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
         
-        if parts.count == 2 {
-            if let minutes = Double(parts[0]), let seconds = Double(parts[1]) {
-                return (minutes * 60.0) + seconds
-            }
-        } else if parts.count == 3 {
-            if let hours = Double(parts[0]), let minutes = Double(parts[1]), let seconds = Double(parts[2]) {
-                return (hours * 3600.0) + (minutes * 60.0) + seconds
-            }
+        guard !rawLines.isEmpty else { return [] }
+        
+        let step = duration > 0 ? (duration / Double(rawLines.count)) : 0.0
+        return rawLines.enumerated().map { index, text in
+            LyricLine(time: Double(index) * step, text: text)
         }
-        return nil
     }
 }

@@ -433,9 +433,10 @@ class NotchViewModel: ObservableObject {
                     if UserDefaults.standard.bool(forKey: "enableLyrics") || self.showMediaLyrics {
                         self.isFetchingLyrics = true
                         LyricsManager.shared.fetchLyrics(for: title, artist: artist ?? "", duration: duration) { [weak self] newLyrics in
-                            self?.isFetchingLyrics = false
-                            self?.lyrics = newLyrics
-                            self?.updateLyricIndex()
+                            guard let self = self, self.currentSong == title else { return }
+                            self.isFetchingLyrics = false
+                            self.lyrics = newLyrics
+                            self.updateLyricIndex()
                         }
                     }
                 }
@@ -677,11 +678,13 @@ class NotchViewModel: ObservableObject {
     
     func fetchLyricsNow() {
         guard !currentSong.isEmpty else { return }
+        let targetSong = currentSong
         isFetchingLyrics = true
         LyricsManager.shared.fetchLyrics(for: currentSong, artist: currentArtist, duration: duration) { [weak self] newLyrics in
-            self?.isFetchingLyrics = false
-            self?.lyrics = newLyrics
-            self?.updateLyricIndex()
+            guard let self = self, self.currentSong == targetSong else { return }
+            self.isFetchingLyrics = false
+            self.lyrics = newLyrics
+            self.updateLyricIndex()
         }
     }
     

@@ -613,9 +613,7 @@ struct ContentView: View {
             .onChange(of: enableLyrics) { enabled in
                 if enabled {
                     if !viewModel.currentSong.isEmpty {
-                        LyricsManager.shared.fetchLyrics(for: viewModel.currentSong, artist: viewModel.currentArtist) { newLyrics in
-                            viewModel.lyrics = newLyrics
-                        }
+                        viewModel.fetchLyricsNow()
                     }
                 } else {
                     viewModel.lyrics = []
